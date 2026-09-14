@@ -40,6 +40,14 @@ void main() {
     expect(secretRefsOf(config).where((ref) => ref.value != null), isNotEmpty);
   });
 
+  test('example/README.md shows the config exactly as it is', () {
+    // pub.dev shows README.md as the package's example, so the copy there has
+    // to be the real config, not one that has drifted from it.
+    final readme = File(p.join(directory, 'README.md')).readAsStringSync();
+    final yaml = File(configPath).readAsStringSync().trimRight();
+    expect(readme, contains('```yaml\n$yaml\n```'));
+  });
+
   final app = ResolveApp.resolve(config, gradleDsl: GradleDsl.kotlin);
   final files = <GeneratedFile>[
     for (final generator in const <Generator>[
