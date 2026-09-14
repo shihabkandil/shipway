@@ -154,6 +154,20 @@ like a broken bundle rather than a hijacked one.
 this shape, recommending a binstub — `bundle binstubs fastlane`, then
 `./bin/fastlane` — which cannot be shadowed. Reproduced on this machine.
 
+A warning turned out not to be enough either: a field report hit exactly this
+through `shipway release`, and had to put the project's Ruby first on `PATH` by
+hand. So `shipway release` no longer runs `bundle exec fastlane` at all. It runs
+`bundle exec ruby -e 'load Gem.bin_path("fastlane", "fastlane")' -- <lane>`,
+which is what a binstub does, without writing one into the project. Before the
+plan it asks the same bundle which Ruby, Bundler and fastlane it holds, prints
+them, and stops when the bundle is not installed — in a second, rather than
+after a release build. Verified with the Homebrew shim first on `PATH`: the old
+command crashed inside Homebrew's Ruby 3.4, the new one ran a real lane on the
+bundled fastlane 2.238.0 with its options intact.
+
+`doctor` also recognises Homebrew by where the executable resolves to, not only
+by the wrapper's contents, which a formula can change.
+
 ## No `Gymfile` is generated
 
 The plan's artifact inventory lists one. shipway does not write it.

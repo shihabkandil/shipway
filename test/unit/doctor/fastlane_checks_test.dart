@@ -44,4 +44,30 @@ load Gem.bin_path("fastlane", "fastlane")
       expect(FastlaneShimCheck.isShim(''), isFalse);
     });
   });
+
+  group('recognising Homebrew by where it lives', () {
+    // A Homebrew formula's wrapper can change shape between releases; where
+    // Homebrew puts things does not.
+    test('Apple silicon, Intel, Linux and a custom prefix', () {
+      for (final path in const <String>[
+        '/opt/homebrew/bin/fastlane',
+        '/usr/local/Cellar/fastlane/2.226.0/bin/fastlane',
+        '/home/linuxbrew/.linuxbrew/bin/fastlane',
+        '/Users/x/brew/Cellar/fastlane/2.226.0_1/libexec/bin/fastlane',
+      ]) {
+        expect(FastlaneShimCheck.isHomebrewPath(path), isTrue, reason: path);
+      }
+    });
+
+    test('a Ruby version manager is not Homebrew', () {
+      for (final path in const <String>[
+        '/Users/x/.rvm/gems/ruby-3.1.1/bin/fastlane',
+        '/Users/x/.rbenv/shims/fastlane',
+        // Unresolved: the check follows symlinks before asking.
+        '/usr/local/bin/fastlane',
+      ]) {
+        expect(FastlaneShimCheck.isHomebrewPath(path), isFalse, reason: path);
+      }
+    });
+  });
 }

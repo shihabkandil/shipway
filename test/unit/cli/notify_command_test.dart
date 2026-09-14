@@ -6,6 +6,7 @@ import 'package:shipway/src/core/env/host_platform.dart';
 import 'package:shipway/src/core/io/http_poster.dart';
 import 'package:test/test.dart';
 
+import '../../support/fastlane_toolchain.dart';
 import '../../support/fixture_project.dart';
 import '../../support/recording_http_poster.dart';
 import '../../support/recording_process_runner.dart';
@@ -73,6 +74,7 @@ void main() {
       ..write('android/fastlane/Fastfile', 'lane :play do\nend\n');
     logger = _CapturingLogger();
     runner = RecordingProcessRunner();
+    stubFastlaneToolchain(runner);
     http = RecordingHttpPoster();
     environment = <String, String>{'SLACK_WEBHOOK': _webhook};
   });
@@ -214,7 +216,7 @@ pipelines:
     });
 
     test('a failed lane is reported as a failure', () async {
-      runner.stub('bundle exec fastlane', exitCode: 1, stderr: 'boom');
+      runner.stub('Gem.bin_path', exitCode: 1, stderr: 'boom');
 
       expect(await release(), isNot(ShipwayExit.success));
       expect(

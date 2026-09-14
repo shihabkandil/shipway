@@ -5,8 +5,10 @@ import 'package:shipway/src/cli/exit_codes.dart';
 import 'package:shipway/src/cli/shipway_command_runner.dart';
 import 'package:shipway/src/core/env/host_platform.dart';
 import 'package:shipway/src/core/managed/lock_file.dart';
+import 'package:shipway/src/core/toolchain/bundled_fastlane.dart';
 import 'package:test/test.dart';
 
+import '../../support/fastlane_toolchain.dart';
 import '../../support/fixture_project.dart';
 import '../../support/recording_process_runner.dart';
 
@@ -90,6 +92,7 @@ void main() {
       ..write('firebase.json', '{}');
     logger = _CapturingLogger();
     runner = RecordingProcessRunner();
+    stubFastlaneToolchain(runner);
   });
 
   Future<int> run(List<String> args) =>
@@ -164,13 +167,13 @@ void main() {
     });
 
     test('and the lane is handed the id that was printed', () async {
-      runner.stub('bundle exec fastlane');
+      runner.stub(BundledFastlane.loader);
 
       final code = await run(<String>['--flavor', 'dev', '--no-notify']);
 
       expect(code, ShipwayExit.success, reason: logger.output);
       expect(
-        runner.invocation('fastlane').arguments,
+        runner.invocation(BundledFastlane.loader).arguments,
         contains('app_id:1:111:android:dev'),
       );
     });

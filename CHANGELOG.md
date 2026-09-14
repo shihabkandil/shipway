@@ -20,6 +20,14 @@ Distribution.
   parse.
 - Fixed: uploading an app bundle to Firebase passed an artifact type the plugin
   rejects.
+- `shipway release` runs fastlane from the project's bundle the way a binstub
+  does, so a Homebrew `fastlane` earlier on `PATH` can no longer replace the
+  pinned gems and plugins. Previously it ran `bundle exec fastlane`, which that
+  shim hijacks.
+- The release plan prints the Ruby, Bundler and fastlane the lane will run on,
+  and a bundle that is not installed stops the release before anything builds.
+- `shipway doctor` recognises a Homebrew fastlane by its install location too,
+  and reports the Ruby, `bundle` and gem home it found.
 
 ## 0.1.0-beta.1
 

@@ -2,8 +2,11 @@ import 'package:mason_logger/mason_logger.dart';
 import 'package:shipway/src/cli/exit_codes.dart';
 import 'package:shipway/src/cli/shipway_command_runner.dart';
 import 'package:shipway/src/core/env/host_platform.dart';
+import 'package:shipway/src/core/toolchain/bundled_fastlane.dart';
+import 'package:shipway/src/core/toolchain/fastlane_pins.dart';
 import 'package:test/test.dart';
 
+import '../../support/fastlane_toolchain.dart';
 import '../../support/fixture_project.dart';
 import '../../support/recording_process_runner.dart';
 
@@ -86,6 +89,7 @@ void main() {
       );
     logger = _CapturingLogger();
     runner = RecordingProcessRunner();
+    stubFastlaneToolchain(runner);
   });
 
   Future<int> run(List<String> args, {HostPlatform? host}) =>
@@ -327,7 +331,8 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
         'play',
         '--dry-run',
       ]);
-      expect(runner.invocations, isEmpty);
+      // The bundle is asked what it holds; nothing is run in it.
+      expect(runner.ran(BundledFastlane.loader), isFalse);
       expect(logger.output, contains('Nothing was uploaded'));
     });
   });
@@ -336,10 +341,10 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
     setUp(() {
       credentials();
       project.write('play.json', '{}');
-      runner.stub('bundle exec fastlane');
+      runner.stub(BundledFastlane.loader);
     });
 
-    test('runs the generated lane through bundler', () async {
+    test('runs fastlane from the bundle, never from PATH', () async {
       final code = await run(<String>[
         'release',
         'android',
@@ -350,14 +355,20 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
       ]);
 
       expect(code, ShipwayExit.success);
-      final invocation = runner.invocation('fastlane');
-      // Through bundler, so the pinned fastlane is the one that runs.
+      final invocation = runner.invocation(BundledFastlane.loader);
+      // What a binstub does. `bundle exec fastlane` looks fastlane up on PATH,
+      // where a Homebrew fastlane replaces the pinned gems and plugins.
       expect(invocation.executable, 'bundle');
-      expect(
-        invocation.arguments,
-        containsAllInOrder(<String>['exec', 'fastlane', 'android', 'play']),
-      );
-      expect(invocation.arguments, contains('flavor:dev'));
+      expect(invocation.arguments, <String>[
+        'exec',
+        'ruby',
+        '-e',
+        BundledFastlane.loader,
+        '--',
+        'android',
+        'play',
+        'flavor:dev',
+      ]);
     });
 
     test('passes only the options that were given', () async {
@@ -371,7 +382,7 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
         '--rollout',
         '0.25',
       ]);
-      final arguments = runner.invocation('fastlane').arguments;
+      final arguments = runner.invocation(BundledFastlane.loader).arguments;
       expect(arguments, contains('rollout:0.25'));
       expect(arguments.where((a) => a.startsWith('track:')), isEmpty);
     });
@@ -386,14 +397,14 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
         'play',
       ]);
       expect(
-        runner.invocation('fastlane').workingDirectory,
+        runner.invocation(BundledFastlane.loader).workingDirectory,
         endsWith('android'),
       );
     });
 
     test('a failure is explained, not just echoed', () async {
       runner.stub(
-        'bundle exec fastlane',
+        BundledFastlane.loader,
         exitCode: 1,
         stdout: 'Google Api Error: Version code has already been used.',
       );
@@ -416,7 +427,7 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
     test('a success is read too', () async {
       // An upload can succeed and still be rejected in processing.
       runner.stub(
-        'bundle exec fastlane',
+        BundledFastlane.loader,
         stdout: 'WARNING: Support for your Ruby version (3.1.1) is going away.',
       );
 
@@ -431,6 +442,68 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
 
       expect(code, ShipwayExit.success);
       expect(logger.output, contains('Ruby'));
+    });
+  });
+
+  group('the toolchain it runs on', () {
+    setUp(() {
+      credentials();
+      project.write('play.json', '{}');
+    });
+
+    const dryRun = <String>[
+      'release',
+      'android',
+      '--flavor',
+      'dev',
+      '--target',
+      'play',
+      '--dry-run',
+    ];
+
+    test('is printed in the plan', () async {
+      expect(await run(dryRun), ShipwayExit.success, reason: logger.output);
+      expect(logger.output, contains('3.3.6'));
+      expect(logger.output, contains('/Users/dev/.rvm/rubies/ruby-3.3.6'));
+      expect(logger.output, contains(FastlanePins.fastlane));
+      expect(logger.output, contains('/Users/dev/.rvm/gems/ruby-3.3.6'));
+    });
+
+    test('is asked of the platform directory bundle', () async {
+      await run(dryRun);
+      expect(
+        runner.invocation('RUBY_VERSION').workingDirectory,
+        endsWith('android'),
+      );
+    });
+
+    test('a bundle that is not installed stops before any build', () async {
+      runner.stub(
+        'RUBY_VERSION',
+        exitCode: 7,
+        stderr:
+            "Could not find gem 'fastlane (= 2.238.0)' in locally installed "
+            'gems.\nRun `bundle install` to install missing gems.',
+      );
+
+      final code = await run(<String>[
+        'release',
+        'android',
+        '--flavor',
+        'dev',
+        '--target',
+        'play',
+      ]);
+
+      expect(code, ShipwayExit.environmentError);
+      expect(logger.output, contains('`bundle install` in android/'));
+      expect(runner.ran(BundledFastlane.loader), isFalse);
+    });
+
+    test('a fastlane other than the pinned one is pointed out', () async {
+      stubFastlaneToolchain(runner, fastlane: '2.199.0');
+      await run(dryRun);
+      expect(logger.output, contains('shipway pins ${FastlanePins.fastlane}'));
     });
   });
 }

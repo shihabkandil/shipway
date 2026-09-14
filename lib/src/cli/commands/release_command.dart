@@ -10,6 +10,8 @@ import '../../core/errors/classifier.dart';
 import '../../core/fastlane/fastfile_lanes.dart';
 import '../../core/fastlane/release_target.dart';
 import '../../core/firebase/google_services.dart';
+import '../../core/toolchain/bundled_fastlane.dart';
+import '../../core/toolchain/fastlane_pins.dart';
 import '../../generators/generated_file.dart';
 import '../../generators/generator_registry.dart';
 import '../../secrets/secret_requirements.dart';
@@ -21,8 +23,9 @@ import '../run_context.dart';
 /// `shipway release ios|android --flavor <f> --target <t>`.
 ///
 /// A front door, not a second implementation: it validates, prints the plan,
-/// then runs the same generated lane a person could run by hand. Nothing it
-/// does is unavailable to somebody who prefers `bundle exec fastlane`.
+/// then runs the same generated lane a person could run by hand, from the
+/// project's bundle. Nothing it does is unavailable to somebody who prefers
+/// running fastlane themselves.
 ///
 /// The order is the point. Everything cheap and local happens before anything
 /// slow or remote, because the failures worth catching — a credential that is
@@ -175,7 +178,30 @@ class ReleaseCommand extends Command<int> {
       return ShipwayExit.environmentError;
     }
 
-    _printPlan(app, flavor, target, results, firebaseApp: firebaseApp);
+    // Asked before the plan and before anything slow. The bundle a lane runs
+    // in is where "works on my machine" lives: printing it makes a failure
+    // afterwards legible, and a bundle that is not installed stops here.
+    final probe = await BundledFastlane.probe(
+      context.runner,
+      directory: p.join(context.projectRoot, target.platform),
+      platform: target.platform,
+    );
+    final toolchainFailure = probe.failure;
+    if (toolchainFailure != null) {
+      logger
+        ..err(toolchainFailure.what)
+        ..info('  ${toolchainFailure.fix}');
+      return ShipwayExit.environmentError;
+    }
+
+    _printPlan(
+      app,
+      flavor,
+      target,
+      results,
+      firebaseApp: firebaseApp,
+      toolchain: probe.toolchain!,
+    );
 
     if (results['dry-run'] as bool) {
       logger
@@ -385,6 +411,7 @@ class ReleaseCommand extends Command<int> {
     ReleaseTarget target,
     ArgResults results, {
     GoogleServicesApp? firebaseApp,
+    required FastlaneToolchain toolchain,
   }) {
     final logger = _context.logger;
     final identifier = target.platform == 'ios'
@@ -438,6 +465,18 @@ class ReleaseCommand extends Command<int> {
       '  version     ${version ?? 'pubspec'}'
       '+${build ?? 'versioning.strategy: ${app.versioning.strategy.name}'}',
     );
+
+    // Which Ruby and which fastlane is the first question about a lane that
+    // failed, and `bundle exec` makes it easy to be wrong about.
+    String dim(String? value) => darkGray.wrap(value ?? 'unknown') ?? '';
+    final pinned = toolchain.fastlane == FastlanePins.fastlane
+        ? ''
+        : '  ${dim('shipway pins ${FastlanePins.fastlane}')}';
+    logger
+      ..info('  ruby        ${toolchain.rubyVersion}  ${dim(toolchain.ruby)}')
+      ..info('  bundler     ${toolchain.bundler ?? 'unknown'}')
+      ..info('  fastlane    ${toolchain.fastlane}$pinned')
+      ..info('  gems        ${dim(toolchain.gemHome)}');
   }
 
   /// Runs the generated lane, then classifies whatever came back.
@@ -451,9 +490,7 @@ class ReleaseCommand extends Command<int> {
     final logger = context.logger;
 
     final directory = p.join(context.projectRoot, target.platform);
-    final arguments = <String>[
-      'exec',
-      'fastlane',
+    final arguments = BundledFastlane.arguments(<String>[
       target.platform,
       target.lane,
       'flavor:${flavor.name}',
@@ -464,7 +501,7 @@ class ReleaseCommand extends Command<int> {
       if (results['version-name'] != null)
         'version_name:${results['version-name']}',
       if (firebaseApp != null) 'app_id:${firebaseApp.appId}',
-    ];
+    ]);
 
     logger
       ..info('')

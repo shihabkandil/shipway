@@ -7,7 +7,7 @@ import '../../core/fastlane/release_target.dart';
 import '../../core/toolchain/fastlane_pins.dart';
 import '../check.dart';
 
-/// Whether the `fastlane` on PATH will actually run the bundled gems.
+/// Whether the `fastlane` on PATH would displace the project's bundle.
 ///
 /// Homebrew installs `fastlane` as a *shell script* that overrides `GEM_HOME`
 /// and `GEM_PATH` and prepends its own Ruby to `PATH` before exec'ing the real
@@ -17,8 +17,9 @@ import '../check.dart';
 /// `Could not find <gem> in locally installed gems`, which reads like a corrupt
 /// bundle and sends people off reinstalling gems for an afternoon.
 ///
-/// The plan's rule — always `bundle exec fastlane` — is necessary but not
-/// sufficient, so this check exists to say so before a release does.
+/// `shipway release` is not affected: it loads fastlane from the bundle
+/// itself. A lane run by hand with `bundle exec fastlane` is, and so is any
+/// script or CI step written that way, so this check says so before one does.
 class FastlaneShimCheck extends Check {
   @override
   String get id => 'fastlane-shim';
@@ -70,25 +71,67 @@ class FastlaneShimCheck extends Check {
       return CheckResult.ok('fastlane at $path');
     }
 
-    String contents;
-    try {
-      contents = file.readAsStringSync();
-    } on FileSystemException {
-      // A real compiled binary, which is fine.
-      return CheckResult.ok('fastlane at $path');
-    }
-
-    if (!isShim(contents)) {
+    if (!isHomebrewPath(_resolve(file)) && !_readsAsShim(file)) {
       return CheckResult.ok('fastlane at $path');
     }
 
     return CheckResult.warn(
-      'The fastlane at $path is a wrapper script that overrides GEM_HOME, so '
-      '`bundle exec fastlane` will not use the version your Gemfile pins.',
+      'The fastlane at $path is Homebrew\'s, which replaces GEM_HOME, so '
+      '`bundle exec fastlane` ignores the gems and plugins $directory/Gemfile '
+      'pins. `shipway release` is unaffected: it loads fastlane from the '
+      'bundle.',
       fixHint:
-          'Run it through a binstub instead: `cd $directory && bundle '
-          'binstubs fastlane` then `./bin/fastlane <lane>`.',
+          'Found ${await _rubyInUse(context)}. For lanes you run yourself, use '
+          'a binstub — `cd $directory && bundle binstubs fastlane`, then '
+          '`./bin/fastlane <lane>` — or put your project\'s Ruby ahead of '
+          'Homebrew on PATH.',
     );
+  }
+
+  /// True when [path] is somewhere Homebrew installs to.
+  ///
+  /// Asked of the resolved path, because `/usr/local/bin/fastlane` is a
+  /// symlink into the Cellar. Kept alongside [isShim] rather than replacing
+  /// it: a formula can change its wrapper's contents, but not where Homebrew
+  /// keeps things.
+  static bool isHomebrewPath(String path) =>
+      path.startsWith('/opt/homebrew/') ||
+      path.startsWith('/home/linuxbrew/') ||
+      path.startsWith('/usr/local/Homebrew/') ||
+      path.contains('/Cellar/');
+
+  static String _resolve(File file) {
+    try {
+      return file.resolveSymbolicLinksSync();
+    } on FileSystemException {
+      return file.path;
+    }
+  }
+
+  static bool _readsAsShim(File file) {
+    try {
+      return isShim(file.readAsStringSync());
+    } on FileSystemException {
+      // A real compiled binary, which is fine.
+      return false;
+    }
+  }
+
+  /// The Ruby, `bundle` and gem home a hand-run lane would use, in words.
+  ///
+  /// Printed because "which Ruby is this" is the whole question, and nobody
+  /// debugging a GEM_HOME problem has the answer in front of them.
+  static Future<String> _rubyInUse(DoctorContext context) async {
+    Future<String> ask(String executable, List<String> arguments) async {
+      final result = await context.runner.run(executable, arguments);
+      final value = result.ok ? result.stdout.trim().split('\n').first : '';
+      return value.isEmpty ? 'unknown' : value;
+    }
+
+    final ruby = await ask('which', const <String>['ruby']);
+    final bundle = await ask('which', const <String>['bundle']);
+    final gems = await ask('ruby', const <String>['-e', 'print Gem.dir']);
+    return 'ruby $ruby, bundle $bundle, gems in $gems';
   }
 }
 

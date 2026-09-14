@@ -350,7 +350,9 @@ abstract final class ErrorClassifier {
           'GEM_PATH, so `bundle exec fastlane` never reaches the bundled gems.',
       fix:
           'Run fastlane through a binstub that cannot be shadowed: '
-          '`bundle binstubs fastlane` then `./bin/fastlane`.',
+          '`bundle binstubs fastlane` then `./bin/fastlane`. If this came '
+          'from `shipway release`, run `bundle install` in the platform '
+          'directory.',
     ),
 
     // verified 2026-09-09

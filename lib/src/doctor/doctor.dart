@@ -137,8 +137,8 @@ class Doctor {
       minimum: const ToolVersion(2, 4, 0),
       installHint: 'Run `gem install bundler`.',
       reason:
-          'shipway always invokes fastlane as `bundle exec fastlane`, '
-          'so a pinned Gemfile controls the version.',
+          'shipway always runs fastlane from the project bundle, so a pinned '
+          'Gemfile controls the version.',
     ),
     VersionCheck(
       id: 'fastlane',

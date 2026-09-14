@@ -560,11 +560,11 @@ Off macOS there is no login keychain, so it refuses before creating anything.
 ## Generated fastlane lanes
 
 `shipway generate fastlane` writes lanes you run yourself, always through
-bundler:
+the bundle:
 
 ```
-cd ios && bundle install
-bundle exec fastlane ios beta flavor:prod
+cd ios && bundle install && bundle binstubs fastlane
+./bin/fastlane ios beta flavor:prod
 ```
 
 **iOS** — `cd ios && bundle exec fastlane ios <lane>`
@@ -602,10 +602,14 @@ Every credential reaches a lane through `ENV`; nothing that could be a secret is
 written into a generated file, and a test greps all fastlane output to keep it
 that way.
 
-> **If `bundle exec fastlane` fails with `Could not find <gem>`,** you have a
-> Homebrew fastlane shadowing the bundle. Use a binstub instead:
-> `cd ios && bundle binstubs fastlane`, then `./bin/fastlane ios beta`.
-> `shipway doctor` warns about this.
+> **Run lanes through the bundle, not through `PATH`.** `bundle exec fastlane`
+> looks `fastlane` up on `PATH`, and a Homebrew fastlane ahead of your
+> project's Ruby replaces the bundle entirely: the Gemfile's pins and the
+> Pluginfile's plugins are not loaded, and the lane fails with
+> `Could not find <gem>` or runs against the wrong gems. A binstub cannot be
+> shadowed: `cd android && bundle binstubs fastlane`, then
+> `./bin/fastlane android firebase flavor:dev`. `shipway release` does the
+> equivalent itself, and `shipway doctor` warns when the shim is there.
 
 ## `shipway release`
 
@@ -644,12 +648,25 @@ $ shipway release android --flavor dev --target play --rollout 0.1 --dry-run
   track       internal
   rollout     0.1 → status inProgress
   version     pubspec+versioning.strategy: remote
+  ruby        3.3.6  /Users/you/.rbenv/versions/3.3.6/bin/ruby
+  bundler     2.6.3
+  fastlane    2.238.0
+  gems        /Users/you/.rbenv/versions/3.3.6/lib/ruby/gems/3.3.0
 
 Nothing was uploaded.
 ```
 
 The plan prints on a real run too, because the first question about a broken
-release is always which build went where.
+release is always which build went where — and, for a lane that fails, which
+Ruby and which fastlane it ran on.
+
+**fastlane runs from the project's bundle.** shipway runs
+`bundle exec ruby -e 'load Gem.bin_path("fastlane", "fastlane")' -- <lane>` in
+the platform directory, which is what a binstub does. `bundle exec fastlane`
+would look `fastlane` up on `PATH`, where a Homebrew fastlane replaces the
+bundle's gems and plugins. The bundle is asked what it holds before the plan,
+so one that was never installed — or was installed for a different Ruby — stops
+the release in a second rather than after the build.
 
 **The credential check is scoped to the destination.** Releasing to Play does
 not ask for an App Store Connect key — noise in a pre-flight is how people

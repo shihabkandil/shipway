@@ -147,7 +147,9 @@ warning, so it never fails a release.
 ## How it works
 
 - fastlane does the signing and uploading. shipway writes the lanes and runs
-  them with `bundle exec fastlane`, so you can always run a lane yourself.
+  them from your project's bundle, so you can always run a lane yourself. It
+  loads fastlane the way a `bundle binstubs fastlane` binstub does, so a
+  Homebrew fastlane on your `PATH` cannot stand in for the pinned one.
 - On iOS, `flutter build ipa` builds the archive and fastlane exports and
   uploads it. Letting fastlane build a Flutter app can quietly ship the wrong
   flavor's code.
