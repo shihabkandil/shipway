@@ -4,10 +4,10 @@ import '../core/secrets/secret_names.dart';
 /// Renders the Ruby that decides a build number.
 ///
 /// Ruby rather than Dart because one of the three strategies means asking App
-/// Store Connect or Google Play, which only fastlane can do. Computing the
-/// other two in Dart would leave two implementations of the same question, and
-/// the failure when they disagree is a duplicate build number in a store — an
-/// error whose message names neither implementation.
+/// Store Connect, Google Play or App Distribution, which only fastlane can do.
+/// Computing the other two in Dart would leave two implementations of the
+/// same question, and the failure when they disagree is a duplicate build
+/// number in a store — an error whose message names neither implementation.
 ///
 /// So there is one answer, in the place that can actually reach a store.
 abstract final class VersionResolver {
@@ -15,15 +15,21 @@ abstract final class VersionResolver {
   ///
   /// `version_name` always comes from `pubspec.yaml`: a marketing version is a
   /// decision, not something to derive. Only the build number varies.
+  ///
+  /// [playKey] is how the Android lanes authenticate to Play, so a `remote`
+  /// lookup reads the same credential the upload does. [firebase] adds
+  /// `firebase_build_number`, for the Firebase lane.
   static String render({
     required VersioningStrategy strategy,
     required bool syncIosAndroid,
     required String platform,
+    ({String name, String parameter})? playKey,
+    bool firebase = false,
   }) =>
       '''
 ${_pubspecReader()}
-${_buildNumber(strategy, platform)}
-${_syncNote(syncIosAndroid)}''';
+${_buildNumber(strategy, platform, playKey)}
+${firebase ? _firebaseBuildNumber(strategy) : ''}${_syncNote(syncIosAndroid)}''';
 
   /// Reads `version: x.y.z+n` without a YAML parser.
   ///
@@ -48,13 +54,24 @@ def version_name(requested = nil)
 end
 ''';
 
-  static String _buildNumber(VersioningStrategy strategy, String platform) =>
-      switch (strategy) {
-        VersioningStrategy.increment => _incrementStrategy(),
-        VersioningStrategy.timestamp => _timestampStrategy(),
-        VersioningStrategy.remote =>
-          platform == 'ios' ? _remoteIosStrategy() : _remoteAndroidStrategy(),
-      };
+  static String _buildNumber(
+    VersioningStrategy strategy,
+    String platform,
+    ({String name, String parameter})? playKey,
+  ) => switch (strategy) {
+    VersioningStrategy.increment => _incrementStrategy(),
+    VersioningStrategy.timestamp => _timestampStrategy(),
+    VersioningStrategy.remote =>
+      platform == 'ios'
+          ? _remoteIosStrategy()
+          : _remoteAndroidStrategy(
+              playKey ??
+                  (
+                    name: SecretNames.playServiceAccountPath,
+                    parameter: 'json_key',
+                  ),
+            ),
+  };
 
   static String _incrementStrategy() => r'''
 # versioning.strategy: increment — pubspec is the source of truth, and bumping
@@ -94,22 +111,74 @@ def build_number(requested = nil, app_identifier:, api_key: nil)
 end
 ''';
 
-  static String _remoteAndroidStrategy() =>
+  /// Asks Play, with the credential the upload itself uses.
+  static String _remoteAndroidStrategy(
+    ({String name, String parameter}) playKey,
+  ) =>
       '''
-# versioning.strategy: remote — ask Play for the codes already on the track.
-def build_number(requested = nil, package_name:, track: "internal", **)
+# versioning.strategy: remote — ask Play for the version codes it already has.
+#
+# Every standard track, plus the one being uploaded to: Play rejects a code
+# that is not higher than every code the app has used, and the highest is
+# usually on production rather than on the track a build is headed for.
+def build_number(requested = nil, package_name:, tracks: [], **)
   value = requested.to_s.strip
   return value unless value.empty?
 
-  codes = google_play_track_version_codes(
-    package_name: package_name,
-    track: track,
-    json_key: ENV.fetch("${SecretNames.playServiceAccountPath}")
-  )
+  names = (%w[internal alpha beta production] + tracks).uniq
+  failures = []
+  codes = names.flat_map do |track|
+    google_play_track_version_codes(
+      package_name: package_name,
+      track: track,
+      ${playKey.parameter}: ENV.fetch("${playKey.name}")
+    ) || []
+  rescue StandardError => e
+    # A track this app has never used answers with an error, not an empty list.
+    failures << "#{track}: #{e.message}"
+    []
+  end
+
+  # Not one track answered: that is a credential or package problem, and
+  # numbering the build 1 would only move the failure to the upload.
+  if failures.length == names.length
+    UI.user_error!("Could not read version codes from Play for #{package_name}.\\n#{failures.join("\\n")}")
+  end
+
   # `.max`, not `.first`: the API does not promise an order, and picking the
-  # wrong element produces a code Play rejects as non-increasing. An empty
-  # track gives nil, which becomes 0, so the first upload is 1.
-  ((codes || []).map(&:to_i).max.to_i + 1).to_s
+  # wrong element produces a code Play rejects as non-increasing. No codes at
+  # all gives nil, which becomes 0, so the first upload is 1.
+  (codes.map(&:to_i).max.to_i + 1).to_s
+end
+''';
+
+  /// The build number for a Firebase App Distribution release.
+  ///
+  /// Only `remote` differs: each Firebase app keeps its own release history,
+  /// which is the history that decides what comes next for it. The other
+  /// strategies never ask anything, so Firebase takes the number any release
+  /// would.
+  static String _firebaseBuildNumber(VersioningStrategy strategy) =>
+      strategy == VersioningStrategy.remote
+      ? r'''
+# versioning.strategy: remote, for Firebase — ask App Distribution for the
+# latest release of this app.
+def firebase_build_number(requested = nil, app:, credentials:)
+  value = requested.to_s.strip
+  return value unless value.empty?
+
+  latest = firebase_app_distribution_get_latest_release(
+    app: app,
+    service_credentials_file: credentials
+  )
+  # nil when the app has no releases yet, so the first upload is 1.
+  ((latest && latest[:buildVersion]).to_i + 1).to_s
+end
+'''
+      : r'''
+# Firebase takes the number any other release would.
+def firebase_build_number(requested = nil, **)
+  build_number(requested)
 end
 ''';
 

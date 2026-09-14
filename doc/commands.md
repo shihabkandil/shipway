@@ -778,7 +778,7 @@ build so the artifact carries the number the store is told about:
 |---|---|
 | `increment` (default) | what `pubspec.yaml` says |
 | `timestamp` | `yyMMddHHmm`, monotonic without asking anything |
-| `remote` | `latest_testflight_build_number + 1`, or the highest Play version code + 1 |
+| `remote` | `latest_testflight_build_number + 1`; the highest Play version code on any standard track + 1; or, for Firebase, the app's latest App Distribution release + 1 |
 
 `--build-number` overrides all three, which is how a re-run reuses a number
 rather than minting one the store has never heard of.

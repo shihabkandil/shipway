@@ -79,7 +79,7 @@ The three strategies:
 |---|---|
 | `increment` (default) | what `pubspec.yaml` says |
 | `timestamp` | `yyMMddHHmm` — monotonic without asking anything |
-| `remote` | `latest_testflight_build_number + 1`, or `google_play_track_version_codes.max + 1` |
+| `remote` | `latest_testflight_build_number + 1`; for Play, the highest version code on any standard track + 1; for Firebase, the app's latest App Distribution release + 1 |
 
 `sync_ios_android` keeps `CFBundleVersion` equal to `versionCode` by resolving
 once per release rather than once per platform.

@@ -96,6 +96,29 @@ void main() {
       );
     });
 
+    test('Android asks every standard track, not just the target one', () {
+      // Play refuses a code not higher than every code the app has used, and
+      // the highest is usually on production.
+      final ruby = render(VersioningStrategy.remote, platform: 'android');
+      expect(ruby, contains('%w[internal alpha beta production] + tracks'));
+    });
+
+    test('Android stops when no track answers, rather than guessing 1', () {
+      final ruby = render(VersioningStrategy.remote, platform: 'android');
+      expect(ruby, contains('failures.length == names.length'));
+      expect(ruby, contains('Could not read version codes from Play'));
+    });
+
+    test('Android asks Play with the credential the upload uses', () {
+      final ruby = VersionResolver.render(
+        strategy: VersioningStrategy.remote,
+        syncIosAndroid: true,
+        platform: 'android',
+        playKey: (name: 'PLAY_JSON', parameter: 'json_key_data'),
+      );
+      expect(ruby, contains('json_key_data: ENV.fetch("PLAY_JSON")'));
+    });
+
     test('each platform gets only its own lookup', () {
       // Rendering both would put an action in a Fastfile that cannot run it.
       expect(
@@ -115,5 +138,47 @@ void main() {
       render(VersioningStrategy.increment, sync: false),
       contains('numbers itself'),
     );
+  });
+
+  group('Firebase', () {
+    String firebase(VersioningStrategy strategy) => VersionResolver.render(
+      strategy: strategy,
+      syncIosAndroid: true,
+      platform: 'android',
+      firebase: true,
+    );
+
+    test('remote asks App Distribution for the app\'s latest release', () {
+      final ruby = firebase(VersioningStrategy.remote);
+      expect(ruby, contains('def firebase_build_number(requested'));
+      expect(ruby, contains('firebase_app_distribution_get_latest_release'));
+      // An app with no releases yet starts at 1.
+      expect(ruby, contains('[:buildVersion]).to_i + 1'));
+    });
+
+    test('the other strategies number it like any release', () {
+      for (final strategy in <VersioningStrategy>[
+        VersioningStrategy.increment,
+        VersioningStrategy.timestamp,
+      ]) {
+        final ruby = firebase(strategy);
+        expect(
+          ruby,
+          contains('build_number(requested)'),
+          reason: strategy.name,
+        );
+        expect(
+          ruby,
+          isNot(contains('firebase_app_distribution_get_latest_release')),
+        );
+      }
+    });
+
+    test('is only there when the Fastfile has a Firebase lane', () {
+      expect(
+        render(VersioningStrategy.remote, platform: 'android'),
+        isNot(contains('firebase_build_number')),
+      );
+    });
   });
 }

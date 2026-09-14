@@ -9,6 +9,7 @@ ResolvedApp app({
   PlayTarget? play,
   FirebaseTarget? firebase,
   AndroidSigningConfig? signing,
+  VersioningConfig versioning = const VersioningConfig(),
   bool flavors = true,
 }) => ResolvedApp(
   appId: 'main',
@@ -19,6 +20,7 @@ ResolvedApp app({
   play: play,
   firebase: firebase,
   androidSigning: signing,
+  versioning: versioning,
   flavors: !flavors
       ? const <ResolvedFlavor>[]
       : <ResolvedFlavor>[
@@ -113,7 +115,7 @@ void main() {
   group('the play lane', () {
     test('defaults to the internal track as a draft', () {
       final fastfile = render(app());
-      expect(fastfile, contains('track: options.fetch(:track, "internal")'));
+      expect(fastfile, contains('track = options.fetch(:track, "internal")'));
       expect(fastfile, contains('release_status: "draft"'));
     });
 
@@ -325,8 +327,12 @@ void main() {
 
     test('passes a requested version through to the build', () {
       final fastfile = lane(firebase(const FirebaseTarget()));
-      expect(fastfile, contains('version_name: options[:version_name]'));
-      expect(fastfile, contains('build_number: options[:build_number]'));
+      expect(
+        fastfile,
+        contains('firebase_build_number(\n      options[:build_number]'),
+      );
+      expect(fastfile, contains('version_name: name'));
+      expect(fastfile, contains('build_number: number'));
     });
   });
 
@@ -378,6 +384,60 @@ void main() {
         ),
       );
       expect(fastfile, isNot(contains('json_key_data')));
+    });
+  });
+
+  group('the version a release claims', () {
+    String lane(String fastfile, String name) {
+      final start = fastfile.indexOf('lane :$name');
+      return fastfile.substring(start, fastfile.indexOf('\n  end\n', start));
+    }
+
+    test('Play resolves it before the build, and builds with it', () {
+      // versioning.strategy used to reach the release plan and stop there:
+      // the build took pubspec's number whatever the config said.
+      final play = lane(render(app()), 'play');
+      expect(
+        play.indexOf('number = build_number('),
+        lessThan(play.indexOf('artifact = build(')),
+      );
+      expect(play, contains('version_name: name'));
+      expect(play, contains('build_number: number'));
+      expect(play, contains('tracks: [track]'));
+    });
+
+    test('Firebase does too, from its own history under remote', () {
+      final fastfile = render(
+        app(
+          firebase: const FirebaseTarget(),
+          versioning: const VersioningConfig(
+            strategy: VersioningStrategy.remote,
+          ),
+        ),
+      );
+      final firebase = lane(fastfile, 'firebase');
+      expect(
+        firebase.indexOf('number = firebase_build_number('),
+        lessThan(firebase.indexOf('artifact = build(')),
+      );
+      expect(firebase, contains('build_number: number'));
+      expect(
+        fastfile,
+        contains('firebase_app_distribution_get_latest_release'),
+      );
+    });
+
+    test('a remote Play lookup reads the credential the upload reads', () {
+      final fastfile = render(
+        app(
+          play: const PlayTarget(serviceAccountRef: 'PLAY_JSON'),
+          versioning: const VersioningConfig(
+            strategy: VersioningStrategy.remote,
+          ),
+        ),
+      );
+      expect(fastfile, contains('json_key_data: ENV.fetch("PLAY_JSON")'));
+      expect(fastfile, isNot(contains('PLAY_SERVICE_ACCOUNT_JSON_PATH')));
     });
   });
 }

@@ -85,6 +85,8 @@ class AndroidFastfileGenerator extends Generator {
         strategy: app.versioning.strategy,
         syncIosAndroid: app.versioning.syncIosAndroid,
         platform: 'android',
+        playKey: playKey(app),
+        firebase: firebase != null,
       ),
       _artifactHelper(),
       if (firebase != null) ...<String>[
@@ -183,15 +185,32 @@ $keyPropertiesGuard
     flavor = require_flavor(options)
     config = flavor_config(flavor)
     require_env("${key.name}")
+    track = options.fetch(:track, "$track")
 
-    artifact = build(flavor: flavor, type: "${isAab ? 'appbundle' : 'apk'}")
+    # Resolved before the build, so the artifact carries the number Play is
+    # about to be told about — versioning.strategy used to reach the plan and
+    # stop there, and the build took whatever pubspec said.
+    name = version_name(options[:version_name])
+    number = build_number(
+      options[:build_number],
+      package_name: config[:package_name],
+      tracks: [track]
+    )
+    UI.message("Shipping #{config[:package_name]} #{name}+#{number} to Play (#{track})")
+
+    artifact = build(
+      flavor: flavor,
+      type: "${isAab ? 'appbundle' : 'apk'}",
+      version_name: name,
+      build_number: number
+    )
 
     next UI.important("dry_run: would upload #{artifact}") if options[:dry_run]
 
     upload_to_play_store(
       package_name: config[:package_name],
       ${key.parameter}: ENV.fetch("${key.name}"),
-      track: options.fetch(:track, "$track"),
+      track: track,
       release_status: "$status",${rollout == null ? '' : '\n      rollout: "$rollout",'}
       ${isAab ? 'aab' : 'apk'}: artifact,
       mapping_paths: File.exist?(mapping_path(flavor)) ? [mapping_path(flavor)] : nil,
@@ -339,13 +358,20 @@ end
     # fail in seconds rather than after the slowest part of the job.
     app_id = firebase_app_id(config, options)
     notes = firebase_release_notes(options[:changelog])
+    name = version_name(options[:version_name])
+    number = firebase_build_number(
+      options[:build_number],
+      app: app_id,
+      credentials: ENV.fetch(credentials)
+    )
+    UI.message("Shipping #{config[:package_name]} #{name}+#{number} to Firebase App Distribution")
 
     type = options.fetch(:type, "apk")
     artifact = build(
       flavor: flavor,
       type: type,
-      version_name: options[:version_name],
-      build_number: options[:build_number]
+      version_name: name,
+      build_number: number
     )
 
     next UI.important("dry_run: would upload #{artifact} to #{app_id}") if options[:dry_run]

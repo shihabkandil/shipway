@@ -56,6 +56,12 @@ Distribution.
   rewrite stops `adopt` and `generate`, naming the line.
   The rewrite tidies the blank lines where it removed something, and leaves
   every other blank line alone.
+- Fixed: the Android `play` and `firebase` lanes ignored `versioning.strategy`
+  and built with pubspec's build number, although the release plan named the
+  strategy. Both now resolve the version before building. `remote` asks Play
+  across every standard track with the configured key, and fails when no track
+  answers; the Firebase lane asks App Distribution for the app's latest
+  release.
 - `adopt` and `generate` refuse to write entrypoints calling a `bootstrap` that
   an existing `lib/main_common.dart` does not define, and print one to add.
 - `shipway build` and `shipway release` analyse the flavor's entrypoint before
