@@ -257,6 +257,25 @@ class ReleaseCommand extends Command<int> {
       toolchain: probe.toolchain!,
     );
 
+    // Recognised by version rather than by the crash, whose text the field
+    // report did not keep. A warning: a later 1.x may well be fixed.
+    final core = probe.toolchain!.googleApisCore;
+    if (target == ReleaseTarget.firebase &&
+        core != null &&
+        FastlanePins.googleApisCoreAboveCeiling(core)) {
+      logger
+        ..info('')
+        ..warn(
+          'The android bundle resolves google-apis-core $core. 1.x crashed '
+          'App Distribution uploads partway through in the field.',
+        )
+        ..info(
+          '  Add gem "google-apis-core", ">= 0.18", "< 1" to android/Gemfile '
+          'and run `bundle update google-apis-core` in android/. See '
+          'doc/troubleshooting.md.',
+        );
+    }
+
     if (upload != null) {
       final refused = upload.problem;
       if (refused != null) {

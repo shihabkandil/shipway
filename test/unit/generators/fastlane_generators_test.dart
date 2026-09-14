@@ -54,6 +54,17 @@ void main() {
       expect(gemfile, contains('ruby ">= ${FastlanePins.rubyFloor}"'));
     });
 
+    test('caps google-apis-core, which nothing else does', () {
+      // fastlane and the Firebase plugin both admit 1.x, and bundler picked it:
+      // the field report's upload crashed on 1.1.0.
+      final gemfile = renderOne(
+        const GemfileGenerator(),
+        app(),
+        'android/Gemfile',
+      );
+      expect(gemfile, contains('gem "google-apis-core", ">= 0.18", "< 1"'));
+    });
+
     test('plugins come from the Pluginfile, not a second gem line', () {
       // Declared in both places they drift; declared only in the Pluginfile
       // without this eval, fastlane reports plugins "couldn't be loaded" and

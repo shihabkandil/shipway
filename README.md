@@ -167,6 +167,9 @@ dart test -P full     # also runs the Ruby and Xcode integration tests
 The `full` run needs `SHIPWAY_FIXTURE_APP` set to the path of any Flutter app
 with an `ios` folder.
 
+Something failing in a way shipway does not explain? See
+[doc/troubleshooting.md](doc/troubleshooting.md).
+
 Please open an issue before starting on a big change. The design notes in
 [doc/](doc/) explain most of the decisions.
 

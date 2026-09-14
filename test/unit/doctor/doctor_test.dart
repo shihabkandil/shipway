@@ -662,6 +662,75 @@ apps:
       },
     );
   });
+
+  group('locked Android gems', () {
+    String lock(String core) =>
+        '''
+GEM
+  remote: https://rubygems.org/
+  specs:
+    fastlane (2.238.0)
+      google-apis-core (>= 0.11.0, < 2.a)
+    fastlane-plugin-firebase_app_distribution (0.10.1)
+    google-apis-core ($core)
+      faraday (~> 2.13)
+''';
+
+    Future<CheckResult> checkWith(
+      String? lockContents, {
+      String? config,
+    }) async {
+      final project = await makeProject();
+      addTearDown(() => project.delete(recursive: true));
+      if (lockContents != null) {
+        File(
+          '${project.path}/android/Gemfile.lock',
+        ).writeAsStringSync(lockContents);
+      }
+      return GemLockCheck().run(
+        contextFor(RecordingProcessRunner(), project, configYaml: config),
+      );
+    }
+
+    const firebaseConfig = '''
+version: 1
+project:
+  name: demo
+apps:
+  main:
+    targets:
+      firebase:
+        groups: [qa]
+''';
+
+    test('reads what was chosen, not what was required', () {
+      final locked = GemLockCheck.lockedVersions(lock('0.18.0'));
+      expect(locked['google-apis-core'], '0.18.0');
+      expect(locked['fastlane'], '2.238.0');
+    });
+
+    test('the field report\'s lock fails where Firebase is shipped', () async {
+      final result = await checkWith(lock('1.1.0'), config: firebaseConfig);
+      expect(result.status, CheckStatus.fail);
+      expect(result.detail, contains('google-apis-core 1.1.0'));
+      expect(result.fixHint, contains('bundle update google-apis-core'));
+    });
+
+    test('and only warns where it is not', () async {
+      expect((await checkWith(lock('1.1.0'))).status, CheckStatus.warn);
+    });
+
+    test('the known-good set passes', () async {
+      expect(
+        (await checkWith(lock('0.18.0'), config: firebaseConfig)).status,
+        CheckStatus.ok,
+      );
+    });
+
+    test('no lock file yet is not a problem to report', () async {
+      expect((await checkWith(null)).status, CheckStatus.skip);
+    });
+  });
 }
 
 class _ExplodingCheck extends Check {

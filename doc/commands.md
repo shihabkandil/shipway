@@ -76,7 +76,7 @@ nothing else will, so it never requires a `shipway.yaml`.
 Check ids: `flutter`, `dart`, `xcode`, `cocoapods`, `ruby`, `bundler`,
 `fastlane`, `xcodeproj_gem`, `pbxproj_object_version`, `jdk`, `gradle_dsl`,
 `gradle_wrapper`, `play_target_sdk`, `firebase`, `flutterfire`, `keychain`,
-`fastlane-shim`, `gemfile-pins`, `fastlane-lanes`.
+`fastlane-shim`, `gemfile-pins`, `fastlane-lanes`, `gem-lock`.
 
 `fastlane-lanes` fails when a target in `shipway.yaml` has no lane in its
 platform's Fastfile, and says whether to regenerate the Fastfile or, if it was
@@ -105,6 +105,10 @@ Two checks are worth knowing about because their symptoms are misleading:
 - `gemfile-pins` checks that the pins in the generated Gemfile can actually be
   solved on your Ruby. `bundle install` does not degrade when they cannot; it
   installs nothing.
+- `gem-lock` reads `android/Gemfile.lock` for `google-apis-core` 1.x beside the
+  Firebase plugin, which crashed uploads partway through. It fails when
+  `targets.firebase` is configured and warns otherwise. See
+  [`troubleshooting.md`](troubleshooting.md).
 
 ## `shipway init`
 
@@ -905,3 +909,5 @@ rollout management are Phase 4.
   a failure is broadcast when a success is not.
 - [`deviations.md`](deviations.md) — where the built thing differs from the plan,
   and why.
+- [`troubleshooting.md`](troubleshooting.md) — failures seen in the field, how
+  to recognise them, and what fixes them.

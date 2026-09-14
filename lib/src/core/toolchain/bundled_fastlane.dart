@@ -9,6 +9,8 @@ class FastlaneToolchain {
     this.fastlane,
     this.fastlanePath,
     this.gemHome,
+    this.googleApisCore,
+    this.firebasePlugin,
   });
 
   /// Reads what [BundledFastlane.probeScript] prints: one `key=value` a line.
@@ -32,6 +34,8 @@ class FastlaneToolchain {
       fastlane: facts['fastlane'],
       fastlanePath: facts['fastlane_path'],
       gemHome: facts['gem_home'],
+      googleApisCore: facts['google_apis_core'],
+      firebasePlugin: facts['firebase_plugin'],
     );
   }
 
@@ -42,6 +46,8 @@ class FastlaneToolchain {
     'fastlane',
     'fastlane_path',
     'gem_home',
+    'google_apis_core',
+    'firebase_plugin',
   };
 
   /// The Ruby executable bundler resolved.
@@ -53,6 +59,12 @@ class FastlaneToolchain {
   final String? fastlane;
   final String? fastlanePath;
   final String? gemHome;
+
+  /// Resolved `google-apis-core`, when the bundle has it.
+  final String? googleApisCore;
+
+  /// Resolved App Distribution plugin, when the bundle has it.
+  final String? firebasePlugin;
 }
 
 /// Why a platform's bundle cannot run a lane, and the one thing to do.
@@ -113,6 +125,8 @@ puts "bundler=#{Bundler::VERSION}"
 puts "fastlane=#{spec&.version}"
 puts "fastlane_path=#{spec&.bin_file("fastlane")}"
 puts "gem_home=#{Gem.dir}"
+puts "google_apis_core=#{Gem.loaded_specs["google-apis-core"]&.version}"
+puts "firebase_plugin=#{Gem.loaded_specs["fastlane-plugin-firebase_app_distribution"]&.version}"
 ''';
 
   /// Asks the bundle in [directory] what a lane would run on.

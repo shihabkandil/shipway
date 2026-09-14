@@ -50,6 +50,11 @@ Distribution.
   an existing `lib/main_common.dart` does not define, and print one to add.
 - `shipway build` and `shipway release` analyse the flavor's entrypoint before
   building, so a compile error fails in seconds. `--no-analyze` skips it.
+- Fixed: the generated Gemfile let bundler resolve `google-apis-core` 1.1.0,
+  which crashed Firebase App Distribution uploads partway through. It now caps
+  it at `>= 0.18, < 1`. `shipway doctor` reads `android/Gemfile.lock` for it
+  (`gem-lock`), and a Firebase release warns before building.
+- New `doc/troubleshooting.md` covering each failure in the field report.
 
 ## 0.1.0-beta.1
 

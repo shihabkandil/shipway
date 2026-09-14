@@ -383,4 +383,19 @@ void main() {
       expect(logger.output, contains('not checked (--no-access-check)'));
     });
   });
+
+  test('a bundle holding google-apis-core 1.x is warned about', () async {
+    runner.stub(
+      'RUBY_VERSION',
+      stdout:
+          '${toolchainProbeOutput()}google_apis_core=1.1.0\n'
+          'firebase_plugin=0.10.1\n',
+    );
+
+    final code = await run(<String>['--flavor', 'dev', '--dry-run']);
+
+    expect(code, ShipwayExit.success, reason: logger.output);
+    expect(logger.output, contains('google-apis-core 1.1.0'));
+    expect(logger.output, contains('bundle update google-apis-core'));
+  });
 }

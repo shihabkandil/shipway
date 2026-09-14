@@ -251,3 +251,82 @@ class ReleaseLanesCheck extends Check {
     );
   }
 }
+
+/// Whether the Android bundle resolved a gem set App Distribution uploads
+/// with.
+///
+/// Read from `android/Gemfile.lock`, because that is where the failure is: the
+/// pins in a Gemfile can be fine while bundler picks an unpinned transitive
+/// gem that is not. A field report's upload crashed partway through on
+/// `google-apis-core` 1.1.0, which neither fastlane nor the plugin excludes.
+class GemLockCheck extends Check {
+  @override
+  String get id => 'gem-lock';
+
+  @override
+  String get title => 'Locked Android gems';
+
+  static const String lockPath = 'android/Gemfile.lock';
+
+  static const String _plugin = 'fastlane-plugin-firebase_app_distribution';
+
+  /// Every gem a `Gemfile.lock` resolved, by name.
+  ///
+  /// Only the four-space `name (version)` entries: the six-space lines under
+  /// them are requirements, not what was chosen.
+  static Map<String, String> lockedVersions(String lock) {
+    final versions = <String, String>{};
+    for (final match in RegExp(
+      r'^ {4}([A-Za-z0-9_.-]+) \(([^)]+)\)',
+      multiLine: true,
+    ).allMatches(lock)) {
+      versions.putIfAbsent(match.group(1)!, () => match.group(2)!);
+    }
+    return versions;
+  }
+
+  @override
+  Future<CheckResult> run(DoctorContext context) async {
+    final file = File(p.join(context.projectRoot, lockPath));
+    if (!file.existsSync()) {
+      return const CheckResult.skip(
+        'No android/Gemfile.lock yet; run `bundle install` in android/.',
+      );
+    }
+
+    final locked = lockedVersions(await file.readAsString());
+    final plugin = locked[_plugin];
+    if (plugin == null) {
+      return const CheckResult.skip(
+        'The Android bundle has no Firebase App Distribution plugin.',
+      );
+    }
+
+    final core = locked['google-apis-core'];
+    if (core == null || !FastlanePins.googleApisCoreAboveCeiling(core)) {
+      return CheckResult.ok(
+        'google-apis-core ${core ?? 'not locked'} with the Firebase plugin '
+        '$plugin',
+      );
+    }
+
+    const detailPrefix = 'android/Gemfile.lock resolves google-apis-core';
+    final detail =
+        '$detailPrefix $core with the Firebase plugin $plugin; 1.x crashed App '
+        'Distribution uploads partway through in the field.';
+    const fix =
+        'Add `gem "google-apis-core", ">= 0.18", "< 1"` to android/Gemfile — '
+        'the Gemfile shipway generates has it — then run '
+        '`bundle update google-apis-core` in android/. See '
+        'doc/troubleshooting.md.';
+
+    // A failure only where it is about to matter: a project that does not
+    // ship to Firebase carries the plugin without ever uploading with it.
+    final shipsFirebase =
+        context.config?.apps.values.any((a) => a.targets.firebase != null) ??
+        false;
+    return shipsFirebase
+        ? CheckResult.fail(detail, fixHint: fix)
+        : CheckResult.warn(detail, fixHint: fix);
+  }
+}

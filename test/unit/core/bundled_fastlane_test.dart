@@ -1,4 +1,5 @@
 import 'package:shipway/src/core/toolchain/bundled_fastlane.dart';
+import 'package:shipway/src/core/toolchain/fastlane_pins.dart';
 import 'package:test/test.dart';
 
 import '../../support/fastlane_toolchain.dart';
@@ -34,6 +35,14 @@ void main() {
       expect(toolchain.bundler, '2.6.3');
       expect(toolchain.fastlane, '2.238.0');
       expect(toolchain.gemHome, '/Users/dev/.rvm/gems/ruby-3.3.6');
+    });
+
+    test('the gems a Firebase upload depends on', () {
+      final toolchain = FastlaneToolchain.parse(
+        'google_apis_core=1.1.0\nfirebase_plugin=0.10.1\n',
+      );
+      expect(toolchain.googleApisCore, '1.1.0');
+      expect(toolchain.firebasePlugin, '0.10.1');
     });
 
     test('warnings on the same stream are not facts', () {
@@ -117,5 +126,12 @@ fastlane=
         contains('does not include fastlane'),
       );
     });
+  });
+
+  test('the ceiling is on the major version', () {
+    expect(FastlanePins.googleApisCoreAboveCeiling('1.1.0'), isTrue);
+    expect(FastlanePins.googleApisCoreAboveCeiling('2.0.0'), isTrue);
+    expect(FastlanePins.googleApisCoreAboveCeiling('0.18.0'), isFalse);
+    expect(FastlanePins.googleApisCoreAboveCeiling('garbage'), isFalse);
   });
 }

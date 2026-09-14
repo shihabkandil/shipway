@@ -22,4 +22,23 @@ abstract final class FastlanePins {
   /// that soft floor, because a Gemfile that refuses to install is a worse
   /// answer to "your Ruby is getting old" than a warning.
   static const String rubyFloor = '3.0';
+
+  /// A ceiling on `google-apis-core`, written into the generated Gemfile.
+  /// Last verified 2026-09-14.
+  ///
+  /// Neither [fastlane] nor [firebaseAppDistribution] caps it below 2.0, so
+  /// those two pins alone resolved 1.1.0 — which runs on Faraday — alongside
+  /// `net-http` 0.9.1. That combination crashed a Firebase App Distribution
+  /// upload partway through in a field report; 0.18.0 uploaded. With this
+  /// constraint the pins resolve 0.18.0 on Ruby 3.1.1.
+  static const List<String> googleApisCore = <String>['>= 0.18', '< 1'];
+
+  /// Whether a resolved `google-apis-core` is at or above the ceiling in
+  /// [googleApisCore].
+  static bool googleApisCoreAboveCeiling(String version) {
+    final major = int.tryParse(
+      RegExp(r'^\d+').stringMatch(version.trim()) ?? '',
+    );
+    return major != null && major >= 1;
+  }
 }

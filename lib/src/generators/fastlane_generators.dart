@@ -50,6 +50,11 @@ ruby ">= ${FastlanePins.rubyFloor}"
 
 gem "fastlane", "${FastlanePins.fastlane}"
 
+# A ceiling, not a dependency of the app. Nothing else caps google-apis-core
+# below 2.0, and 1.x crashed Firebase App Distribution uploads partway through;
+# see shipway's doc/troubleshooting.md.
+gem "google-apis-core", ${FastlanePins.googleApisCore.map((c) => '"$c"').join(', ')}
+
 # The Pluginfile is the single source of truth for plugins, exactly as
 # `fastlane add_plugin` maintains it.
 plugins_path = File.join(File.dirname(__FILE__), "fastlane", "Pluginfile")
