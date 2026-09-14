@@ -2,7 +2,7 @@
 ///
 /// Must match `version:` in `pubspec.yaml`, which a test asserts. Two copies
 /// because a compiled program cannot read its own pubspec.
-const String packageVersion = '0.1.0-beta.2';
+const String packageVersion = '0.1.0-beta.3';
 
 /// Where the package lives, for a machine that has to install it.
 ///

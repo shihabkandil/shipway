@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-beta.3
+
+- Added `example/README.md`, so pub.dev finds and shows the example. It
+  explains the example app, shows the full `shipway.yaml`, and lists the
+  credentials each target needs.
+
 ## 0.1.0-beta.2
 
 Fixes from the first field report of an app shipping to Firebase App
