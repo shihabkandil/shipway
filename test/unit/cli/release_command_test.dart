@@ -359,6 +359,7 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
       // What a binstub does. `bundle exec fastlane` looks fastlane up on PATH,
       // where a Homebrew fastlane replaces the pinned gems and plugins.
       expect(invocation.executable, 'bundle');
+      expect(invocation.streamed, isTrue);
       expect(invocation.arguments, <String>[
         'exec',
         'ruby',
@@ -369,6 +370,61 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
         'play',
         'flavor:dev',
       ]);
+    });
+
+    test(
+      'shows the lane output as it runs, marked with its platform',
+      () async {
+        // Held back until the end, a twenty-minute build looks like a hang; and
+        // a pipeline runs the iOS and Android lanes into one terminal.
+        runner.stub(
+          BundledFastlane.loader,
+          lines: <String>['Building the app bundle', 'Uploaded to Play'],
+        );
+
+        final code = await run(<String>[
+          'release',
+          'android',
+          '--flavor',
+          'dev',
+          '--target',
+          'play',
+        ]);
+
+        expect(code, ShipwayExit.success);
+        expect(
+          logger.lines.where(
+            (line) =>
+                line.contains('android │') && line.contains('Uploaded to Play'),
+          ),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('a failed lane names itself and its exit code', () async {
+      runner.stub(
+        BundledFastlane.loader,
+        exitCode: 1,
+        lines: <String>['[!] Something went wrong'],
+      );
+
+      final code = await run(<String>[
+        'release',
+        'android',
+        '--flavor',
+        'dev',
+        '--target',
+        'play',
+      ]);
+
+      expect(code, ShipwayExit.environmentError);
+      expect(logger.output, contains('The play lane failed for dev (exit 1).'));
+      // Shown once, as it happened, not again after the failure.
+      expect(
+        logger.lines.where((line) => line.contains('Something went wrong')),
+        hasLength(1),
+      );
     });
 
     test('passes only the options that were given', () async {

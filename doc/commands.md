@@ -729,6 +729,12 @@ The plan prints on a real run too, because the first question about a broken
 release is always which build went where — and, for a lane that fails, which
 Ruby and which fastlane it ran on.
 
+The lane's own output then streams as it runs, each line marked with its
+platform (`android │ …`), so a long build does not look like a hang and the two
+lanes of a parallel pipeline stay readable. When it fails, shipway names the
+lane and its exit code and says what the output meant, without printing it a
+second time.
+
 **fastlane runs from the project's bundle.** shipway runs
 `bundle exec ruby -e 'load Gem.bin_path("fastlane", "fastlane")' -- <lane>` in
 the platform directory, which is what a binstub does. `bundle exec fastlane`

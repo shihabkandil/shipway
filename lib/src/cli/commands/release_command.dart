@@ -11,6 +11,7 @@ import '../../core/fastlane/fastfile_lanes.dart';
 import '../../core/fastlane/release_target.dart';
 import '../../core/firebase/google_services.dart';
 import '../../core/firebase/service_account.dart';
+import '../../core/io/process_runner.dart';
 import '../../core/toolchain/bundled_fastlane.dart';
 import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../core/toolchain/fastlane_pins.dart';
@@ -719,7 +720,14 @@ class ReleaseCommand extends Command<int> {
       ..info('  gems        ${dim(toolchain.gemHome)}');
   }
 
-  /// Runs the generated lane, then classifies whatever came back.
+  /// Runs the generated lane, showing its output as it arrives, then
+  /// classifies what it said.
+  ///
+  /// Streamed because a release lane builds for minutes before it uploads,
+  /// and output held back until the end is indistinguishable from a hang.
+  /// Each line carries its platform, because a pipeline runs the iOS and
+  /// Android lanes at once into one terminal. The output is kept too, since
+  /// the classifier reads the whole of it.
   Future<int> _runLane(
     ReleaseTarget target,
     ResolvedFlavor flavor,
@@ -748,22 +756,32 @@ class ReleaseCommand extends Command<int> {
       ..info('')
       ..detail('Running: bundle ${arguments.join(' ')}');
 
-    final result = await context.runner.run(
-      'bundle',
-      arguments,
-      workingDirectory: directory,
-      environment: environment.isEmpty ? null : environment,
-    );
+    final prefix = darkGray.wrap('${target.platform} │ ') ?? '';
+    final output = StringBuffer();
+    var exitCode = 0;
+    try {
+      await for (final line in context.runner.stream(
+        'bundle',
+        arguments,
+        workingDirectory: directory,
+        environment: environment.isEmpty ? null : environment,
+      )) {
+        output.writeln(line);
+        logger.info('$prefix$line');
+      }
+    } on ProcessExitException catch (failure) {
+      exitCode = failure.exitCode;
+    }
 
-    if (result.ok) {
+    if (exitCode == 0) {
       logger.info(green.wrap('Released ${flavor.name} to ${target.id}.') ?? '');
       // A store upload can succeed and still be rejected in processing, so the
       // output of a success is worth reading too.
-      _reportDiagnoses(result.output, asWarning: true);
+      _reportDiagnoses(output.toString(), asWarning: true);
       return ShipwayExit.success;
     }
 
-    if (result.notFound) {
+    if (exitCode == ProcessResultLite.exitCodeNotFound && output.isEmpty) {
       logger
         ..err('bundler is not available.')
         ..info(
@@ -772,8 +790,13 @@ class ReleaseCommand extends Command<int> {
       return ShipwayExit.environmentError;
     }
 
-    logger.info(result.output);
-    _reportDiagnoses(result.output);
+    // The output is already on screen. What is left is saying what it meant.
+    logger
+      ..info('')
+      ..err(
+        'The ${target.lane} lane failed for ${flavor.name} (exit $exitCode).',
+      );
+    _reportDiagnoses(output.toString());
     return ShipwayExit.environmentError;
   }
 

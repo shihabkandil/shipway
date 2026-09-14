@@ -26,6 +26,9 @@ Distribution.
   shim hijacks.
 - The release plan prints the Ruby, Bundler and fastlane the lane will run on,
   and a bundle that is not installed stops the release before anything builds.
+- The lane's output streams while `shipway release` runs, each line marked
+  with its platform. It used to appear only when the lane finished, so a long
+  build looked like a hang.
 - `shipway doctor` recognises a Homebrew fastlane by its install location too,
   and reports the Ruby, `bundle` and gem home it found.
 - Firebase credentials per flavor:
