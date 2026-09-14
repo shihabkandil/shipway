@@ -394,6 +394,91 @@ apps:
       );
     });
 
+    void placeAndroidApps(String flavor, Map<String, String> apps) =>
+        project.writeJson(
+          'android/app/src/$flavor/google-services.json',
+          <String, Object>{
+            'project_info': <String, Object>{'project_id': 'acme'},
+            'client': <Object>[
+              for (final app in apps.entries)
+                <String, Object>{
+                  'client_info': <String, Object>{
+                    'mobilesdk_app_id': app.value,
+                    'android_client_info': <String, Object>{
+                      'package_name': app.key,
+                    },
+                  },
+                },
+            ],
+          },
+        );
+
+    /// What `security add-generic-password` was given for [name], if anything.
+    String? storedValue(String name) {
+      final matches = runner.invocations.where(
+        (i) =>
+            i.commandLine.contains('add-generic-password') &&
+            i.arguments.contains(name),
+      );
+      return matches.isEmpty ? null : matches.single.stdin;
+    }
+
+    test(
+      'a file listing several apps shows and stores the flavor\'s own',
+      () async {
+        project.write('shipway.yaml', '''
+version: 1
+project:
+  name: acme_app
+apps:
+  main:
+    path: .
+    android:
+      application_id: com.acme.app
+    flavors:
+      dev:
+        suffix: .dev
+        firebase:
+          distribution:
+            android_app_id_ref: FB_DEV_APP_ID
+      prod:
+        suffix: ""
+    targets:
+      firebase:
+        groups: [qa]
+''');
+        // Production first, the way Firebase writes the file. The first entry
+        // used to be taken as the dev flavor's app.
+        placeAndroidApps('dev', <String, String>{
+          'com.acme.app': '1:111:android:prod',
+          'com.acme.app.dev': '1:111:android:dev',
+        });
+
+        await run(<String>['setup', 'firebase']);
+
+        expect(logger.output, contains('app id 1:111:android:dev'));
+        expect(logger.output, isNot(contains('1:111:android:prod')));
+        expect(storedValue('FB_DEV_APP_ID'), contains('1:111:android:dev'));
+      },
+    );
+
+    test('one variable for flavors in different apps is not stored', () async {
+      placeAndroid('dev', '1:111:android:aaa');
+      placeAndroidApps('prod', <String, String>{
+        'com.acme.app': '1:222:android:bbb',
+      });
+
+      await run(<String>['setup', 'firebase']);
+
+      // Either value would send the other flavor's builds to the wrong app.
+      expect(storedValue('FB_ANDROID_APP_ID'), isNull);
+      expect(logger.output, contains('different Firebase apps'));
+      expect(
+        logger.output,
+        contains('flavors.<name>.firebase.distribution.android_app_id_ref'),
+      );
+    });
+
     test('it never downloads anything', () async {
       placeAndroid('dev', '1:111:android:aaa');
 

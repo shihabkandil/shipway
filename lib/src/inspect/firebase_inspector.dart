@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../core/firebase/google_services.dart';
 import '../core/model/firebase_model.dart';
 import '../core/model/uncertainty.dart';
 
@@ -54,15 +54,19 @@ class FirebaseInspector {
 
     Future<void> consider(File file, String? sourceSet) async {
       if (!file.existsSync()) return;
-      final json = await _decode(file);
+      final apps = await _androidApps(file);
+      // A file names "its" app only when it lists one. Firebase writes every
+      // Android app in a project into the same download, and reporting the
+      // first entry as the app is how a flavor ends up with another's app id.
+      final only = apps.length == 1 ? apps.single : null;
       files.add(
         FirebaseConfigFile(
           path: p.relative(file.path, from: root),
           platform: 'android',
           sourceSet: sourceSet,
-          projectId: _projectId(json),
-          bundleOrPackageId: _androidPackage(json),
-          appId: _androidAppId(json),
+          projectId: apps.firstOrNull?.projectId,
+          bundleOrPackageId: only?.packageName,
+          appId: only?.appId,
         ),
       );
     }
@@ -164,39 +168,12 @@ class FirebaseInspector {
     }
   }
 
-  Future<Map<String, dynamic>> _decode(File file) async {
+  static Future<List<GoogleServicesApp>> _androidApps(File file) async {
     try {
-      final decoded = jsonDecode(await file.readAsString());
-      return decoded is Map ? decoded.cast<String, dynamic>() : const {};
+      return GoogleServices.appsIn(await file.readAsString());
     } on FormatException {
-      return const <String, dynamic>{};
+      return const <GoogleServicesApp>[];
     }
-  }
-
-  static String? _projectId(Map<String, dynamic> json) {
-    final info = json['project_info'];
-    return info is Map ? info['project_id'] as String? : null;
-  }
-
-  static String? _androidPackage(Map<String, dynamic> json) {
-    final client = _firstClient(json);
-    final info = client?['client_info'];
-    if (info is! Map) return null;
-    final android = info['android_client_info'];
-    return android is Map ? android['package_name'] as String? : null;
-  }
-
-  static String? _androidAppId(Map<String, dynamic> json) {
-    final client = _firstClient(json);
-    final info = client?['client_info'];
-    return info is Map ? info['mobilesdk_app_id'] as String? : null;
-  }
-
-  static Map<String, dynamic>? _firstClient(Map<String, dynamic> json) {
-    final clients = json['client'];
-    if (clients is! List || clients.isEmpty) return null;
-    final first = clients.first;
-    return first is Map ? first.cast<String, dynamic>() : null;
   }
 
   /// Pulls a value out of an XML plist without a full parse.

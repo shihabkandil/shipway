@@ -37,6 +37,11 @@ Distribution.
   `.env.<flavor>` or the keychain — to the lane, with paths made absolute.
   Previously the pre-flight could pass while the lane could not see the value.
 - `.env.<flavor>` now layers over `.env` instead of replacing it.
+- Fixed: `shipway setup firebase` stored and printed the first app in a
+  `google-services.json`, which Firebase fills with every Android app in the
+  project. Each flavor's app is now found by its package name, and one shared
+  `targets.firebase.android_app_id_ref` is stored only when every flavor names
+  the same app — otherwise `setup` says why it was not.
 - A Firebase release prints the service account and the app's project, warns
   when they belong to different projects, and checks with App Distribution
   that the account may upload before building. A 403 names the account, the

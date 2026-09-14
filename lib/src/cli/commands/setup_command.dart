@@ -8,6 +8,8 @@ import 'package:path/path.dart' as p;
 
 import '../../core/config/config_patch.dart';
 import '../../core/config/shipway_config.dart';
+import '../../core/firebase/google_services.dart';
+import '../../generators/generator_registry.dart';
 import '../../platform/android/keystore_creator.dart';
 import '../../core/model/firebase_model.dart';
 import '../../core/secrets/secret_names.dart';
@@ -158,6 +160,8 @@ class SetupCommand extends Command<int> {
       return ShipwayExit.environmentError;
     }
 
+    final byFlavor = _firebaseByFlavor(config, app, files);
+
     logger.info('');
     for (final file in files) {
       final flavor = _flavorFor(file, app);
@@ -165,9 +169,8 @@ class SetupCommand extends Command<int> {
       logger
         ..info('  ${file.platform.padRight(8)} $label')
         ..info('           ${darkGray.wrap(file.path) ?? file.path}');
-      final id = file.appId;
-      if (id != null) {
-        logger.info('           ${darkGray.wrap('app id $id') ?? id}');
+      for (final line in _appIdLines(file, flavor, byFlavor)) {
+        logger.info('           ${darkGray.wrap(line) ?? line}');
       }
     }
 
@@ -189,7 +192,7 @@ class SetupCommand extends Command<int> {
     // The app ids are not secret — they are compiled into the app — but the
     // lanes read them by name, so putting them where the resolver looks is
     // what makes `secrets check` answerable without a trip to the console.
-    final stored = await _storeFirebaseAppIds(app, files);
+    final stored = await _storeFirebaseAppIds(app, byFlavor);
     if (stored.isNotEmpty) {
       logger.info('Stored ${stored.join(' and ')} in the login keychain.');
     }
@@ -258,11 +261,113 @@ class SetupCommand extends Command<int> {
     file.writeAsStringSync(ConfigPatch.setAll(file.readAsStringSync(), values));
   }
 
-  /// Puts the app ids where the resolver looks, under the names the config
-  /// already uses.
-  Future<List<String>> _storeFirebaseAppIds(
+  /// Each flavor's Firebase config file and the app it names, per platform.
+  ///
+  /// Android apps are found by the flavor's package name, never by position:
+  /// Firebase writes every Android app in a project into the same
+  /// `google-services.json`, so a file two flavors share holds both, and its
+  /// first entry is the right answer for one of them at most.
+  Map<String, _FlavorFirebase> _firebaseByFlavor(
+    ShipwayConfig config,
     AppConfig app,
     List<FirebaseConfigFile> files,
+  ) {
+    final context = _context;
+    final resolved = GeneratorRegistry.resolveFor(
+      config,
+      context.projectRoot,
+      appId: context.appId,
+    );
+
+    String? pathFor(String flavor, String platform) {
+      final firebase = app.flavors[flavor]?.firebase;
+      final configured = platform == 'android'
+          ? firebase?.android
+          : firebase?.ios;
+      if (configured != null) return p.normalize(configured);
+      final own = files.where(
+        (f) => f.platform == platform && f.sourceSet == flavor,
+      );
+      if (own.isNotEmpty) return own.first.path;
+      // One unflavored google-services.json can serve every flavor. There is
+      // no iOS equivalent a flavor could be matched to.
+      if (platform != 'android') return null;
+      return files
+          .where((f) => f.platform == 'android' && f.sourceSet == null)
+          .firstOrNull
+          ?.path;
+    }
+
+    return <String, _FlavorFirebase>{
+      for (final flavor in resolved.flavors)
+        flavor.name: _flavorFirebase(
+          androidPath: pathFor(flavor.name, 'android'),
+          packageName: flavor.androidApplicationId,
+          iosPath: pathFor(flavor.name, 'ios'),
+          files: files,
+        ),
+    };
+  }
+
+  _FlavorFirebase _flavorFirebase({
+    required String? androidPath,
+    required String? packageName,
+    required String? iosPath,
+    required List<FirebaseConfigFile> files,
+  }) => _FlavorFirebase(
+    androidPath: androidPath,
+    androidAppId: androidPath == null || packageName == null
+        ? null
+        : GoogleServices.lookup(
+            _context.projectRoot,
+            androidPath,
+            packageName,
+          ).app?.appId,
+    // A GoogleService-Info.plist names exactly one app.
+    iosPath: iosPath,
+    iosAppId: files
+        .where((f) => f.platform == 'ios' && f.path == iosPath)
+        .firstOrNull
+        ?.appId,
+  );
+
+  /// What to say about the app ids in [file]: the app each flavor using it
+  /// uploads to, so a shared file shows every flavor's rather than its first.
+  static List<String> _appIdLines(
+    FirebaseConfigFile file,
+    String? flavor,
+    Map<String, _FlavorFirebase> byFlavor,
+  ) {
+    final users = <String>[
+      for (final entry in byFlavor.entries)
+        if (entry.value.pathFor(file.platform) == file.path) entry.key,
+    ];
+    if (users.isEmpty) {
+      final id = file.appId;
+      return id == null ? const <String>[] : <String>['app id $id'];
+    }
+    return <String>[
+      for (final user in users)
+        switch (byFlavor[user]!.appIdFor(file.platform)) {
+          null => 'no app for `$user` in this file',
+          final id =>
+            users.length == 1 && user == flavor
+                ? 'app id $id'
+                : 'app id $id for `$user`',
+        },
+    ];
+  }
+
+  /// Puts the app ids where the resolver looks, under the names the config
+  /// already uses.
+  ///
+  /// A flavor's own variable gets that flavor's app. The target's single
+  /// variable serves every flavor without one, so it is stored only when they
+  /// all name the same app: storing any one of several would send the other
+  /// flavors' builds to it, and saying so is the useful answer.
+  Future<List<String>> _storeFirebaseAppIds(
+    AppConfig app,
+    Map<String, _FlavorFirebase> byFlavor,
   ) async {
     final target = app.targets.firebase;
     if (target == null || !_context.host.hasSecurityKeychain) {
@@ -276,13 +381,7 @@ class SetupCommand extends Command<int> {
     );
 
     final stored = <String>[];
-    Future<void> put(String? ref, String platform) async {
-      if (ref == null) return;
-      final id = files
-          .where((f) => f.platform == platform && f.appId != null)
-          .map((f) => f.appId!)
-          .firstOrNull;
-      if (id == null) return;
+    Future<void> put(String ref, String id) async {
       try {
         await store.set(ref, id);
         stored.add(ref);
@@ -292,9 +391,66 @@ class SetupCommand extends Command<int> {
       }
     }
 
-    await put(target.androidAppIdRef, 'android');
-    await put(target.iosAppIdRef, 'ios');
+    final sharingAndroid = <String, String>{};
+    for (final entry in byFlavor.entries) {
+      final id = entry.value.androidAppId;
+      if (id == null) continue;
+      final own =
+          app.flavors[entry.key]?.firebase?.distribution?.androidAppIdRef;
+      if (own != null) {
+        await put(own, id);
+      } else {
+        sharingAndroid[entry.key] = id;
+      }
+    }
+    await _putShared(
+      ref: target.androidAppIdRef,
+      key: 'targets.firebase.android_app_id_ref',
+      ids: sharingAndroid,
+      put: put,
+      remedy:
+          'A release reads each flavor\'s app id from its google-services.json. '
+          'Remove targets.firebase.android_app_id_ref, or name one per flavor '
+          'with flavors.<name>.firebase.distribution.android_app_id_ref.',
+    );
+
+    await _putShared(
+      ref: target.iosAppIdRef,
+      key: 'targets.firebase.ios_app_id_ref',
+      ids: <String, String>{
+        for (final entry in byFlavor.entries)
+          if (entry.value.iosAppId case final id?) entry.key: id,
+      },
+      put: put,
+      remedy: 'Nothing reads it yet, so it can be removed.',
+    );
     return stored;
+  }
+
+  /// Stores [ids] under one shared [ref] when they agree, and explains when
+  /// they do not.
+  Future<void> _putShared({
+    required String? ref,
+    required String key,
+    required Map<String, String> ids,
+    required Future<void> Function(String ref, String id) put,
+    required String remedy,
+  }) async {
+    if (ref == null || ids.isEmpty) return;
+    final distinct = ids.values.toSet();
+    if (distinct.length == 1) {
+      await put(ref, distinct.single);
+      return;
+    }
+    _context.logger
+      ..info('')
+      ..warn(
+        '$key names one variable, $ref, but '
+        '${ids.keys.map((f) => '`$f`').join(' and ')} are different Firebase '
+        'apps (${ids.entries.map((e) => '${e.key}: ${e.value}').join(', ')}). '
+        'It was not stored.',
+      )
+      ..info('  $remedy');
   }
 
   /// `shipway setup ios-signing` — adopt a certificates repository.
@@ -694,4 +850,25 @@ keyAlias=$alias
         'that decides how your app is signed.',
       );
   }
+}
+
+/// Where one flavor's Firebase config comes from, and the app it names.
+class _FlavorFirebase {
+  const _FlavorFirebase({
+    this.androidPath,
+    this.androidAppId,
+    this.iosPath,
+    this.iosAppId,
+  });
+
+  final String? androidPath;
+  final String? androidAppId;
+  final String? iosPath;
+  final String? iosAppId;
+
+  String? pathFor(String platform) =>
+      platform == 'android' ? androidPath : iosPath;
+
+  String? appIdFor(String platform) =>
+      platform == 'android' ? androidAppId : iosAppId;
 }
