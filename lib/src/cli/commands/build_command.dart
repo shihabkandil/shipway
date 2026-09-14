@@ -8,6 +8,7 @@ import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../generators/generator_registry.dart';
 import '../../generators/generated_file.dart';
 import '../exit_codes.dart';
+import '../preflight.dart';
 import '../run_context.dart';
 
 /// What `flutter build` is asked to produce.
@@ -145,6 +146,8 @@ class BuildCommand extends Command<int> {
         ..info('  $commandLine');
       return ShipwayExit.success;
     }
+
+    warnAboutGeneratedCode(context);
 
     if (resolved != null && results['analyze'] as bool) {
       final analysis = await EntrypointAnalysis.run(

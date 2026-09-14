@@ -60,6 +60,23 @@ to do with shipping, so it lives beside the runner instead of inside it: the
 run reports to Slack as it goes, and a Slack failure is a warning rather than a
 failed step. See [`notifications.md`](notifications.md).
 
+## Checked before anything runs
+
+Every flavor and target a `build` or `release` step names is checked before the
+first step, with a suggestion when a name is close to one the config has:
+
+```
+Pipeline `beta` releases flavor `prod`, which this config does not declare. Did you mean `production`?
+  Flavors: development, production.
+```
+
+Found at the release step instead, a typo costs every step before it. `shipway
+doctor` runs the same check across all pipelines (`pipelines`).
+
+It is **not** done when the config loads, deliberately: a mistake in one pipeline
+must not stop `shipway release` or any other command that never runs that
+pipeline. Pipelines are still parsed on use for the same reason.
+
 ## Resume, and why it is the hard part
 
 The failure that matters: a `beta` pipeline uploads to TestFlight, then fails

@@ -42,6 +42,12 @@ Accepted before any command.
 | `--app=<id>` | Which app in a monorepo to act on. |
 | `--env=<name>` | `workstation`, `ci` or `persistent`. Decides which sources secrets may come from and whether shipway may prompt. Detected when omitted; also settable as `SHIPWAY_ENV` or `ci.environment`. |
 
+**Where the project is.** Without `--config`, shipway looks for `shipway.yaml`
+in the current directory and then in each parent, stopping at the root of the
+repository, and acts on the directory it finds. Running from `android/` or
+`ios/` therefore acts on the project, not on a directory where every relative
+path points somewhere else. `--verbose` says when it has moved.
+
 ## Exit codes
 
 Coarse on purpose, so a CI script can tell the three kinds of failure apart
@@ -76,7 +82,7 @@ nothing else will, so it never requires a `shipway.yaml`.
 Check ids: `flutter`, `dart`, `xcode`, `cocoapods`, `ruby`, `bundler`,
 `fastlane`, `xcodeproj_gem`, `pbxproj_object_version`, `jdk`, `gradle_dsl`,
 `gradle_wrapper`, `play_target_sdk`, `firebase`, `flutterfire`, `keychain`,
-`fastlane-shim`, `gemfile-pins`, `fastlane-lanes`, `gem-lock`.
+`fastlane-shim`, `gemfile-pins`, `fastlane-lanes`, `gem-lock`, `pipelines`.
 
 `fastlane-lanes` fails when a target in `shipway.yaml` has no lane in its
 platform's Fastfile, and says whether to regenerate the Fastfile or, if it was
@@ -331,6 +337,26 @@ the wrong Firebase project.
 specific Firebase app; a tool that fetched one would have to guess which, and
 guessing wrong surfaces as an app reporting to somebody else's analytics.
 
+## `shipway disown`
+
+> Stop shipway writing to a file, and keep it exactly as it is.
+
+```
+shipway disown <path> [--dry-run]
+```
+
+The inverse of `adopt`, and how to keep an edit to a file shipway generated —
+a lane added to a generated Fastfile, say. The file is left exactly as it is,
+recorded as yours in `.shipway/lock.json`, and `generate` reports it as `yours`
+rather than blocking on it. `shipway adopt <path>` hands it back.
+
+When `generate` finds a generated file you have edited, it says both ways out:
+`--force` replaces your edit, `disown` keeps it.
+
+There is no "accept this edit" command, on purpose. Recording an edited file as
+shipway's own would make the next `generate` see no edit at all, and overwrite
+it without warning the moment `shipway.yaml` changed.
+
 ## `shipway build`
 
 > Build a flavor for one platform.
@@ -349,6 +375,12 @@ that **do not fail**:
 
 Neither produces an error, so shipway assembles the command rather than leaving
 it to memory.
+
+**Stale generated code is pointed out.** When `build_runner` is a dev
+dependency, a `part 'x.g.dart';` whose file is missing, or older than the
+library declaring it, is warned about before building, with the command that
+regenerates it. It never stops the build: whether generated code is committed is
+the project's decision.
 
 **The entrypoint is analysed first.** A release build compiles Dart minutes in,
 behind Gradle or Xcode. `dart analyze` on the flavor's entrypoint takes seconds,
@@ -781,7 +813,8 @@ pipelines:
 ```
 
 Steps are `analyze`, `test`, `build`, `release` and `run` (an arbitrary
-command). Steps run in order; a `parallel:` block runs its steps together.
+command). Every flavor and target they name is checked before the first step
+runs, with a "did you mean" when a name is close. Steps run in order; a `parallel:` block runs its steps together.
 There are no inferred dependencies — the order in the file is the order of
 execution, always.
 

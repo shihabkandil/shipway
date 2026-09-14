@@ -165,6 +165,7 @@ class Doctor {
     GemfileSolvableCheck(),
     ReleaseLanesCheck(),
     GemLockCheck(),
+    PipelinesCheck(),
   ];
 
   /// Runs every check.

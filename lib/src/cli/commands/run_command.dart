@@ -1,6 +1,7 @@
 import 'package:args/command_runner.dart';
 import 'package:mason_logger/mason_logger.dart';
 
+import '../../core/config/pipeline_references.dart';
 import '../../pipeline/pipeline.dart';
 import '../../pipeline/pipeline_parser.dart';
 import '../../pipeline/pipeline_runner.dart';
@@ -94,6 +95,22 @@ class RunCommand extends Command<int> {
       logger.err(e.message);
       final hint = e.hint;
       if (hint != null) logger.info(hint);
+      return ShipwayExit.userError;
+    }
+
+    // Every flavor and target a step names, before any step runs. Found at
+    // the release step instead, a typo costs everything before it.
+    final references = PipelineReferences.check(
+      config,
+      pipeline: requested,
+      appId: context.appId,
+    );
+    if (references.isNotEmpty) {
+      for (final problem in references) {
+        logger
+          ..err(problem.what)
+          ..info('  ${problem.hint}');
+      }
       return ShipwayExit.userError;
     }
 

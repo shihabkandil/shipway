@@ -55,6 +55,15 @@ Distribution.
   it at `>= 0.18, < 1`. `shipway doctor` reads `android/Gemfile.lock` for it
   (`gem-lock`), and a Firebase release warns before building.
 - New `doc/troubleshooting.md` covering each failure in the field report.
+- `shipway run` checks every flavor and target a pipeline names before its
+  first step, and suggests the closest name. `shipway doctor` checks all
+  pipelines (`pipelines`).
+- `shipway build` and `release` warn when build_runner output is missing or
+  older than its source.
+- New `shipway disown <path>`: keep your edits to a generated file and stop
+  shipway writing it. The message for an edited generated file now says so.
+- Commands run from a subdirectory such as `android/` find `shipway.yaml` in a
+  parent directory, up to the repository root.
 
 ## 0.1.0-beta.1
 

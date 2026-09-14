@@ -5,6 +5,7 @@ import 'package:shipway/src/core/env/host_platform.dart';
 import 'package:shipway/src/version.dart';
 import 'package:test/test.dart';
 
+import '../../support/fixture_project.dart';
 import '../../support/recording_process_runner.dart';
 
 /// Captures what the CLI printed.
@@ -165,6 +166,54 @@ void main() {
       expect(code, ShipwayExit.environmentError);
       expect(logger.output, contains('Linux'));
       expect(logger.output, contains('shipway build android'));
+    });
+  });
+
+  group('where the project is', () {
+    late FixtureProject project;
+
+    setUp(() async {
+      project = await FixtureProject.create();
+      addTearDown(project.dispose);
+      project
+        ..write('shipway.yaml', '''
+version: 1
+project:
+  name: acme_app
+apps:
+  main:
+    signing:
+      android:
+        keystore_ref: ANDROID_KEYSTORE_BASE64
+''')
+        ..write('android/app/build.gradle.kts', 'android { }\n');
+    });
+
+    test('a command run from android/ finds shipway.yaml above it', () async {
+      // Run from a platform directory, every relative path used to resolve
+      // from the wrong place, starting with shipway.yaml itself.
+      final code = await build(
+        cwd: '${project.path}/android',
+      ).run(<String>['--env=persistent', 'secrets', 'list']);
+
+      expect(code, ShipwayExit.success, reason: logger.output);
+      expect(logger.output, contains('ANDROID_KEYSTORE_BASE64'));
+    });
+
+    test('but never past the root of a repository', () async {
+      project.write('app/.git/HEAD', 'ref: refs/heads/main\n');
+      project.write('app/android/.keep', '');
+
+      final code = await build(
+        cwd: '${project.path}/app/android',
+      ).run(<String>['--env=persistent', 'secrets', 'list']);
+
+      expect(code, ShipwayExit.userError);
+      expect(logger.output, contains('No shipway.yaml'));
+    });
+
+    test('projectRootFrom leaves a directory with its own config alone', () {
+      expect(ShipwayCommandRunner.projectRootFrom(project.path), project.path);
     });
   });
 }

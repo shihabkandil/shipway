@@ -50,6 +50,7 @@ class LockEntry {
     this.hash,
     this.blockHash,
     this.adoptedAt,
+    this.disownedAt,
   });
 
   final String path;
@@ -67,12 +68,18 @@ class LockEntry {
 
   final DateTime? adoptedAt;
 
+  /// When `shipway disown` handed this file back. An unmanaged file with this
+  /// set is one somebody declined, not one shipway has yet to be given: it is
+  /// left alone quietly rather than reported as a conflict every run.
+  final DateTime? disownedAt;
+
   LockEntry copyWith({
     Ownership? ownership,
     WriteMode? mode,
     String? hash,
     String? blockHash,
     DateTime? adoptedAt,
+    DateTime? disownedAt,
   }) => LockEntry(
     path: path,
     ownership: ownership ?? this.ownership,
@@ -80,6 +87,7 @@ class LockEntry {
     hash: hash ?? this.hash,
     blockHash: blockHash ?? this.blockHash,
     adoptedAt: adoptedAt ?? this.adoptedAt,
+    disownedAt: disownedAt ?? this.disownedAt,
   );
 
   Map<String, dynamic> toJson() => <String, dynamic>{
@@ -88,6 +96,7 @@ class LockEntry {
     if (hash != null) 'hash': hash,
     if (blockHash != null) 'blockHash': blockHash,
     if (adoptedAt != null) 'adoptedAt': adoptedAt!.toUtc().toIso8601String(),
+    if (disownedAt != null) 'disownedAt': disownedAt!.toUtc().toIso8601String(),
   };
 
   static LockEntry fromJson(String path, Map<String, dynamic> json) =>
@@ -98,6 +107,10 @@ class LockEntry {
         hash: json['hash'] as String?,
         blockHash: json['blockHash'] as String?,
         adoptedAt: switch (json['adoptedAt']) {
+          final String s => DateTime.tryParse(s),
+          _ => null,
+        },
+        disownedAt: switch (json['disownedAt']) {
           final String s => DateTime.tryParse(s),
           _ => null,
         },
@@ -146,6 +159,7 @@ class LockFile {
     hash: entry.hash,
     blockHash: entry.blockHash,
     adoptedAt: entry.adoptedAt,
+    disownedAt: entry.disownedAt,
   );
 
   /// Records [path] as discovered-but-untouched, as import does for everything

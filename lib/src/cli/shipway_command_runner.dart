@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
 import 'package:mason_logger/mason_logger.dart';
+import 'package:path/path.dart' as p;
 
 import '../core/env/host_platform.dart';
 import '../core/config/config_exception.dart';
+import '../core/config/config_loader.dart';
 import '../core/io/http_poster.dart';
 import '../core/io/process_runner.dart';
 import '../core/env/run_environment.dart';
@@ -14,6 +16,7 @@ import '../core/managed/managed_block.dart';
 import '../version.dart';
 import 'commands/adopt_command.dart';
 import 'commands/build_command.dart';
+import 'commands/disown_command.dart';
 import 'commands/release_command.dart';
 import 'commands/run_command.dart';
 import 'commands/secrets_command.dart';
@@ -89,6 +92,7 @@ class ShipwayCommandRunner extends CommandRunner<int> {
     addCommand(StatusCommand(() => context));
     addCommand(GenerateCommand(() => context));
     addCommand(AdoptCommand(() => context));
+    addCommand(DisownCommand(() => context));
     addCommand(BuildCommand(() => context));
     addCommand(ReleaseCommand(() => context));
     addCommand(SecretsCommand(() => context));
@@ -169,15 +173,48 @@ class ShipwayCommandRunner extends CommandRunner<int> {
     }
   }
 
+  /// The nearest directory at or above [start] holding `shipway.yaml`, or
+  /// [start] itself when there is none.
+  ///
+  /// So a command run from `android/` or `ios/` acts on the project, instead of
+  /// resolving every relative path from the wrong place — which a field report
+  /// ran into from a platform directory. The walk stops at a repository root,
+  /// so a stray config higher up the disk is never picked up.
+  static String projectRootFrom(String start) {
+    final absolute = p.normalize(p.absolute(start));
+    var directory = absolute;
+    while (true) {
+      if (ConfigLoader.locate(directory) != null) {
+        return directory == absolute ? start : directory;
+      }
+      final git = p.join(directory, '.git');
+      if (FileSystemEntity.typeSync(git) != FileSystemEntityType.notFound) {
+        return start;
+      }
+      final parent = p.dirname(directory);
+      if (parent == directory) return start;
+      directory = parent;
+    }
+  }
+
   void _applyGlobals(ArgResults results) {
     final verbose = results['verbose'] as bool;
     if (verbose) _logger.level = Level.verbose;
+    final configPath = results['config'] as String?;
+    final projectRoot = configPath == null
+        ? projectRootFrom(_workingDirectory)
+        : _workingDirectory;
+    if (projectRoot != _workingDirectory) {
+      _logger.detail(
+        'Using the project at $projectRoot, where shipway.yaml is.',
+      );
+    }
     _resolved = RunContext(
       logger: _logger,
       redactor: _redactor,
       runner: _initialContext.runner,
-      projectRoot: _workingDirectory,
-      configPath: results['config'] as String?,
+      projectRoot: projectRoot,
+      configPath: configPath,
       appId: results['app'] as String?,
       verbose: verbose,
       assumeYes: results['yes'] as bool,

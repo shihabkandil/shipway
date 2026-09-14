@@ -731,6 +731,51 @@ apps:
       expect((await checkWith(null)).status, CheckStatus.skip);
     });
   });
+
+  group('pipelines', () {
+    Future<CheckResult> checkWith(String pipelines) async {
+      final project = await makeProject();
+      addTearDown(() => project.delete(recursive: true));
+      return PipelinesCheck().run(
+        contextFor(
+          RecordingProcessRunner(),
+          project,
+          configYaml:
+              '''
+version: 1
+project:
+  name: demo
+apps:
+  main:
+    flavors:
+      development:
+        suffix: .dev
+      production:
+        suffix: ""
+    targets:
+      play:
+        track: internal
+$pipelines
+''',
+        ),
+      );
+    }
+
+    test('a misspelt flavor fails, with the likely name', () async {
+      final result = await checkWith(
+        'pipelines:\n  beta:\n    - release: { flavor: prod, target: play }',
+      );
+      expect(result.status, CheckStatus.fail);
+      expect(result.detail, contains('Did you mean `production`?'));
+    });
+
+    test('correct pipelines pass', () async {
+      final result = await checkWith(
+        'pipelines:\n  beta:\n    - release: { flavor: production, target: play }',
+      );
+      expect(result.status, CheckStatus.ok);
+    });
+  });
 }
 
 class _ExplodingCheck extends Check {

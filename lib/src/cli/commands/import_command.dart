@@ -137,6 +137,8 @@ class ImportCommand extends Command<int> {
       if (!File(p.join(root, relative)).existsSync()) return;
       // Never downgrade a file the user already adopted.
       if (lock.ownershipOf(relative) != Ownership.unmanaged) return;
+      // Nor forget that one was disowned.
+      if (lock[relative]?.disownedAt != null) return;
       lock.noteUnmanaged(relative, mode: mode);
     }
 

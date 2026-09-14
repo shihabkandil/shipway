@@ -675,4 +675,76 @@ android {
       );
     });
   });
+
+  group('disown', () {
+    setUp(makeAgreeingProject);
+
+    Future<void> generated() async {
+      await run(<String>['import']);
+      await run(<String>['adopt', 'all']);
+      await run(<String>['generate']);
+    }
+
+    test('an edited generated file says how to keep the edit', () async {
+      await generated();
+      project.write(
+        'lib/main_dev.dart',
+        '// my own entrypoint\nvoid main() {}\n',
+      );
+      logger.clear();
+
+      await run(<String>['generate', 'entrypoints']);
+
+      expect(logger.output, contains('shipway disown lib/main_dev.dart'));
+    });
+
+    test('keeps the edit, and generate stops asking about it', () async {
+      await generated();
+      const edited = '// my own entrypoint\nvoid main() {}\n';
+      project.write('lib/main_dev.dart', edited);
+
+      expect(
+        await run(<String>['disown', 'lib/main_dev.dart']),
+        ShipwayExit.success,
+      );
+      logger.clear();
+
+      expect(
+        await run(<String>['generate', 'entrypoints']),
+        ShipwayExit.success,
+        reason: logger.output,
+      );
+      expect(project.read('lib/main_dev.dart'), edited);
+      expect(logger.output, contains('yours'));
+    });
+
+    test('survives a later import', () async {
+      await generated();
+      await run(<String>['disown', 'lib/main_dev.dart']);
+
+      await run(<String>['import', '--force']);
+
+      expect(project.read('.shipway/lock.json'), contains('disownedAt'));
+    });
+
+    test('adopt takes it back', () async {
+      await generated();
+      await run(<String>['disown', 'lib/main_dev.dart']);
+
+      await run(<String>['adopt', 'lib/main_dev.dart']);
+
+      expect(project.read('.shipway/lock.json'), isNot(contains('disownedAt')));
+    });
+
+    test('a file shipway never wrote has nothing to disown', () async {
+      await run(<String>['import']);
+      logger.clear();
+
+      expect(
+        await run(<String>['disown', 'lib/some_widget.dart']),
+        ShipwayExit.success,
+      );
+      expect(logger.output, contains('nothing to disown'));
+    });
+  });
 }

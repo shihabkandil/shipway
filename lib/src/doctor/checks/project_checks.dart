@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../core/config/pipeline_references.dart';
 import '../check.dart';
 import '../platform_deadlines.dart';
 import '../tool_version.dart';
@@ -329,5 +330,43 @@ class FirebaseToolingCheck extends Check {
         File(
           p.join(context.projectRoot, 'android/app/google-services.json'),
         ).existsSync();
+  }
+}
+
+/// Whether every pipeline names flavors and targets the config has.
+///
+/// The same check `shipway run` makes before its first step, asked of every
+/// pipeline at once. A config still loads with a typo in a pipeline — one
+/// broken pipeline must not stop `shipway release` — so this is where it shows
+/// up before somebody runs the pipeline.
+class PipelinesCheck extends Check {
+  @override
+  String get id => 'pipelines';
+
+  @override
+  String get title => 'Pipelines';
+
+  @override
+  Future<CheckResult> run(DoctorContext context) async {
+    final config = context.config;
+    if (config == null) {
+      return const CheckResult.skip('No shipway.yaml to read pipelines from.');
+    }
+    if (config.pipelines.isEmpty) {
+      return const CheckResult.skip('No pipelines declared.');
+    }
+
+    final problems = PipelineReferences.check(config);
+    if (problems.isEmpty) {
+      final count = config.pipelines.length;
+      return CheckResult.ok(
+        '$count pipeline${count == 1 ? '' : 's'}, naming only flavors and '
+        'targets this config has.',
+      );
+    }
+    return CheckResult.fail(
+      problems.map((problem) => problem.what).join(' '),
+      fixHint: <String>{for (final problem in problems) problem.hint}.join(' '),
+    );
   }
 }

@@ -32,7 +32,10 @@ enum WriteOutcome {
   conflictContent,
 
   /// The file could not be written for a reason shipway cannot resolve.
-  failed;
+  failed,
+
+  /// Handed back with `shipway disown`. Left alone, and not a conflict.
+  declined;
 
   bool get isConflict =>
       this == WriteOutcome.conflictUnmanaged ||
@@ -95,6 +98,12 @@ class GeneratedFileWriter {
   Future<WriteResult> plan(GeneratedFile file) async {
     final target = File(p.join(root, file.path));
     final ownership = lock.ownershipOf(file.path);
+
+    // Declined, not pending: somebody handed this file back on purpose, so it
+    // is neither written nor reported as blocked.
+    if (lock[file.path]?.disownedAt != null) {
+      return WriteResult(file: file, outcome: WriteOutcome.declined);
+    }
 
     // Before anything else: a file that would not compile is not worth
     // planning, whoever owns it.
@@ -177,9 +186,12 @@ class GeneratedFileWriter {
             ? '${file.path} has been edited since shipway wrote it.'
             : 'the shipway block in ${file.path} has been edited since '
                   'shipway wrote it.',
-        remedy:
-            'Re-run with --force to discard those edits, or move them '
-            'outside the managed block.',
+        remedy: file.mode == WriteMode.full
+            ? 'Re-run with --force to replace your edits with what '
+                  'shipway.yaml describes, or run `shipway disown ${file.path}` '
+                  'to keep them and stop shipway writing this file.'
+            : 'Re-run with --force to discard those edits, or move them '
+                  'outside the managed block.',
       );
     }
 

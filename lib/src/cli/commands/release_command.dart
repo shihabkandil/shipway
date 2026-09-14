@@ -21,6 +21,7 @@ import '../../secrets/secret_requirements.dart';
 import '../../secrets/secret_resolver.dart';
 import '../exit_codes.dart';
 import '../notifications.dart';
+import '../preflight.dart';
 import '../run_context.dart';
 
 /// `shipway release ios|android --flavor <f> --target <t>`.
@@ -195,6 +196,8 @@ class ReleaseCommand extends Command<int> {
       logger.info('  shipway secrets list   — where each one is looked for');
       return ShipwayExit.environmentError;
     }
+
+    warnAboutGeneratedCode(context);
 
     // The Dart half of a release build compiles minutes in, behind Gradle or
     // Xcode. One file's analysis says in seconds whether it will.

@@ -456,5 +456,6 @@ class GenerateCommand extends Command<int> {
         WriteOutcome.conflictEdited => yellow.wrap('  edited') ?? 'edited',
         WriteOutcome.conflictContent => yellow.wrap('conflict') ?? 'conflict',
         WriteOutcome.failed => red.wrap('  failed') ?? 'failed',
+        WriteOutcome.declined => darkGray.wrap('   yours') ?? 'yours',
       };
 }
