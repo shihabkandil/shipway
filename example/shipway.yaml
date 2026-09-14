@@ -1,0 +1,120 @@
+# An example shipway.yaml using every destination shipway ships to.
+#
+# Acme is a Flutter app with two flavors in two Firebase projects:
+#
+#   development  com.acme.app.dev   Firebase project acme-dev
+#   production   com.acme.app       Firebase project acme-prod
+#
+# Fields ending in `_ref` name an environment variable or keychain entry.
+# They never hold the secret itself; shipway refuses to load a config that
+# does. Every name below is one this project chose. Rename any of them.
+#
+# The files beside this one are what `shipway generate fastlane` writes from
+# it, unedited. A test regenerates them and fails if they drift.
+
+version: 1
+
+project:
+  name: acme_app
+
+apps:
+  main:
+    path: .
+
+    android:
+      application_id: com.acme.app
+    ios:
+      bundle_id: com.acme.app
+      export: gym                  # gym (default) or flutter
+
+    flavors:
+      development:
+        suffix: .dev               # com.acme.app.dev on both platforms
+        version_name_suffix: -dev
+        display_name: Acme Dev
+        entrypoint: lib/main_dev.dart
+        dart_defines:
+          API_URL: https://dev.api.acme.app
+        firebase:
+          android: android/app/src/development/google-services.json
+          ios: ios/config/development/GoogleService-Info.plist
+          # A different Firebase project from production, so a different
+          # service account. Without this block the flavor uses
+          # FIREBASE_SERVICE_ACCOUNT_JSON_PATH.
+          distribution:
+            service_account_ref: FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH
+      production:
+        suffix: ""                 # the unsuffixed id: com.acme.app
+        display_name: Acme
+        entrypoint: lib/main_prod.dart
+        dart_defines:
+          API_URL: https://api.acme.app
+        firebase:
+          android: android/app/src/production/google-services.json
+          ios: ios/config/production/GoogleService-Info.plist
+
+    signing:
+      ios:
+        team_id: ABCDE12345
+        match_git_url: https://github.com/acme/certificates.git
+        match_storage: git
+        api_key:                   # App Store Connect API key
+          key_id_ref: ASC_KEY_ID
+          issuer_id_ref: ASC_ISSUER_ID
+          p8_ref: ASC_KEY_P8_BASE64
+      android:
+        keystore_ref: ANDROID_KEYSTORE_BASE64
+        key_properties:
+          store_password_ref: ANDROID_STORE_PASSWORD
+          key_password_ref: ANDROID_KEY_PASSWORD
+          key_alias: upload
+
+    targets:
+      testflight:
+        groups: [internal]
+        distribute_external: false
+        changelog_from: git        # git | file | prompt
+      appstore:
+        submit_for_review: false
+        metadata_path: ios/fastlane/metadata
+      play:
+        track: internal            # internal | alpha | beta | production
+        release_status: draft
+        artifact: aab
+        # Holds the service-account JSON itself. Leave it out to use a path in
+        # PLAY_SERVICE_ACCOUNT_JSON_PATH instead.
+        service_account_ref: PLAY_SERVICE_ACCOUNT_JSON
+      firebase:                    # App Distribution, Android only for now
+        groups: [qa, product]
+        changelog_from: git
+        # No app id variable: each flavor's app id is read from its own
+        # google-services.json.
+
+    versioning:
+      strategy: remote             # ask each store for its last build number
+      sync_ios_android: true
+
+secrets:
+  dotenv: .env.{flavor}
+  keychain: true
+
+notify:
+  slack_webhook_ref: SLACK_WEBHOOK
+  on: [failure]
+
+pipelines:
+  # Every change a tester should see: both platforms at once.
+  beta:
+    - analyze
+    - test
+    - parallel:
+        - release: { flavor: development, target: firebase }
+        - release: { flavor: development, target: testflight }
+
+  # A store release. Promote on Play and submit on App Store Connect by hand.
+  store:
+    - analyze
+    - test
+    - parallel:
+        - release: { flavor: production, target: play }
+        - release: { flavor: production, target: appstore }
