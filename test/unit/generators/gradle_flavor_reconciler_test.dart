@@ -157,6 +157,56 @@ android {
     expect(reconcile(source).text, source);
   });
 
+  group('the layout it leaves', () {
+    test('removals do not leave blank lines doubled or against a brace', () {
+      final result = reconcile('''
+android {
+    namespace = "com.acme.app"
+
+    flavorDimensions += "environment"
+
+    productFlavors {
+        create("development") {
+            dimension = "environment"
+        }
+    }
+}
+''');
+      expect(result.text, 'android {\n    namespace = "com.acme.app"\n}\n');
+    });
+
+    test('a separating blank line between kept lines survives', () {
+      final result = reconcile(reported);
+      expect(
+        result.text,
+        contains('    namespace = "com.acme.app"\n\n    productFlavors {'),
+      );
+      expect(result.text, isNot(contains('\n\n\n')));
+      // Nothing blank straight after the opening brace of a flavor.
+      expect(result.text, isNot(contains('{\n\n')));
+    });
+
+    test('blank lines away from any removal are the project\'s own', () {
+      const source = '''
+android {
+    namespace = "com.acme.app"
+
+
+    compileSdk = 35
+
+    productFlavors {
+        create("development") {
+            dimension = "environment"
+            manifestPlaceholders["host"] = "dev"
+        }
+    }
+}
+''';
+      final result = reconcile(source);
+      expect(result.text, contains('"com.acme.app"\n\n\n    compileSdk = 35'));
+    });
+  });
+
   group('what it refuses rather than rewrites', () {
     test('productFlavors.create outside a productFlavors block', () {
       final result = reconcile('''

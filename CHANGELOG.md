@@ -46,6 +46,8 @@ Distribution.
   rewrites the project's own declarations to `getByName`, removing only the
   properties the block sets; `adopt` shows the rewrite first. What it cannot
   rewrite stops `adopt` and `generate`, naming the line.
+  The rewrite tidies the blank lines where it removed something, and leaves
+  every other blank line alone.
 - `adopt` and `generate` refuse to write entrypoints calling a `bootstrap` that
   an existing `lib/main_common.dart` does not define, and print one to add.
 - `shipway build` and `shipway release` analyse the flavor's entrypoint before

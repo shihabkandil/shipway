@@ -279,6 +279,10 @@ class GradleFlavorReconciler extends ContentReconciler {
   }
 
   /// Applies non-overlapping edits from the end, so offsets stay valid.
+  ///
+  /// A removed line takes its surroundings into account: the blank line that
+  /// separated it from its neighbours is not left behind to double up with
+  /// another, or to sit against a brace.
   static String _apply(String content, List<_Edit> edits) {
     final sorted = edits.toList()..sort((a, b) => b.start.compareTo(a.start));
     var result = content;
@@ -287,8 +291,62 @@ class GradleFlavorReconciler extends ContentReconciler {
       if (edit.end > limit) continue;
       result = result.replaceRange(edit.start, edit.end, edit.replacement);
       limit = edit.start;
+      final removedLines =
+          edit.replacement.isEmpty &&
+          (edit.start == 0 || result[edit.start - 1] == '\n');
+      if (removedLines) {
+        final tidied = _tidyJoin(result, edit.start);
+        // Tidying only ever removes text before the join, so every edit still
+        // to apply — all of them earlier in the file — moves by that much.
+        limit -= result.length - tidied.text.length - tidied.removedAfter;
+        result = tidied.text;
+      }
     }
     return result;
+  }
+
+  /// Removes a blank line left doubled, or against a brace, where two lines
+  /// were joined at [join].
+  ///
+  /// Only at the join: blank lines elsewhere are the project's own layout.
+  static ({String text, int removedAfter}) _tidyJoin(String text, int join) {
+    var removedAfter = 0;
+    var result = text;
+
+    // A blank line after the join, under a blank line or an opening brace.
+    while (true) {
+      final next = _lineAt(result, join);
+      final previous = _lineBefore(result, join);
+      final nextBlank = next.text.trim().isEmpty && next.end > join;
+      if (!nextBlank || previous == null) break;
+      final previousText = previous.text.trim();
+      if (previousText.isNotEmpty && !previousText.endsWith('{')) break;
+      result = result.replaceRange(next.start, next.end, '');
+      removedAfter += next.end - next.start;
+    }
+
+    // A blank line before the join, above a closing brace.
+    final previous = _lineBefore(result, join);
+    final next = _lineAt(result, join);
+    if (previous != null &&
+        previous.text.trim().isEmpty &&
+        next.text.trim().startsWith('}')) {
+      result = result.replaceRange(previous.start, previous.end, '');
+    }
+    return (text: result, removedAfter: removedAfter);
+  }
+
+  /// The line starting at [offset], newline included.
+  static _Line _lineAt(String text, int offset) {
+    final end = _lineEnd(text, offset);
+    return _Line(offset, end, text.substring(offset, end), true);
+  }
+
+  /// The line ending just before [offset], or null at the start of the text.
+  static _Line? _lineBefore(String text, int offset) {
+    if (offset == 0) return null;
+    final start = _lineStart(text, offset - 1);
+    return _Line(start, offset, text.substring(start, offset), true);
   }
 }
 
