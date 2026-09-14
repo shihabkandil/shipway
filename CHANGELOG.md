@@ -28,6 +28,19 @@ Distribution.
   and a bundle that is not installed stops the release before anything builds.
 - `shipway doctor` recognises a Homebrew fastlane by its install location too,
   and reports the Ruby, `bundle` and gem home it found.
+- Firebase credentials per flavor:
+  `flavors.<name>.firebase.distribution.service_account_ref` and
+  `android_app_id_ref`, for flavors in separate Firebase projects. The
+  pre-flight asks only for the flavor being shipped, and CI export and the
+  generated workflow name each account.
+- `shipway release` passes the credentials its pre-flight found — in `.env`,
+  `.env.<flavor>` or the keychain — to the lane, with paths made absolute.
+  Previously the pre-flight could pass while the lane could not see the value.
+- `.env.<flavor>` now layers over `.env` instead of replacing it.
+- A Firebase release prints the service account and the app's project, warns
+  when they belong to different projects, and checks with App Distribution
+  that the account may upload before building. A 403 names the account, the
+  project and the role to grant. `--no-access-check` skips it.
 
 ## 0.1.0-beta.1
 

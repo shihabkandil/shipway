@@ -2,6 +2,7 @@ import '../core/config/shipway_config.dart';
 import '../core/managed/comment_style.dart';
 import '../core/model/android_model.dart';
 import '../core/managed/lock_file.dart';
+import '../core/secrets/secret_names.dart';
 
 /// Where to put a managed block in a file shipway does not own outright.
 ///
@@ -221,6 +222,12 @@ class ResolvedApp {
 
   bool get hasFlavors => flavors.isNotEmpty;
 
+  /// The variable naming [flavor]'s Android app id, or null when it comes
+  /// from the flavor's `google-services.json`. The same rule as
+  /// `AppConfig.firebaseAndroidAppIdVariable`, which the pre-flight uses.
+  String? firebaseAndroidAppIdVariable(ResolvedFlavor flavor) =>
+      flavor.firebaseAndroidAppIdRef ?? firebase?.androidAppIdRef;
+
   ResolvedFlavor? flavor(String name) {
     for (final flavor in flavors) {
       if (flavor.name == name) return flavor;
@@ -243,6 +250,8 @@ class ResolvedFlavor {
     this.iosBundleId,
     this.firebaseAndroid,
     this.firebaseIos,
+    this.firebaseServiceAccountRef,
+    this.firebaseAndroidAppIdRef,
   });
 
   final String name;
@@ -265,6 +274,15 @@ class ResolvedFlavor {
 
   final String? firebaseAndroid;
   final String? firebaseIos;
+
+  /// `flavors.<name>.firebase.distribution`, as written — null when the
+  /// flavor uses the defaults.
+  final String? firebaseServiceAccountRef;
+  final String? firebaseAndroidAppIdRef;
+
+  /// The variable holding the path to this flavor's service account.
+  String get firebaseServiceAccountVariable =>
+      firebaseServiceAccountRef ?? SecretNames.firebaseServiceAccountPath;
 
   /// The iOS build configuration names this flavor requires.
   List<String> get iosConfigurations => <String>[

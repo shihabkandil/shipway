@@ -10,10 +10,12 @@ import '../../core/errors/classifier.dart';
 import '../../core/fastlane/fastfile_lanes.dart';
 import '../../core/fastlane/release_target.dart';
 import '../../core/firebase/google_services.dart';
+import '../../core/firebase/service_account.dart';
 import '../../core/toolchain/bundled_fastlane.dart';
 import '../../core/toolchain/fastlane_pins.dart';
 import '../../generators/generated_file.dart';
 import '../../generators/generator_registry.dart';
+import '../../platform/android/firebase_access.dart';
 import '../../secrets/secret_requirements.dart';
 import '../../secrets/secret_resolver.dart';
 import '../exit_codes.dart';
@@ -63,6 +65,13 @@ class ReleaseCommand extends Command<int> {
         'dry-run',
         negatable: false,
         help: 'Validate and print the plan, upload nothing.',
+      )
+      ..addFlag(
+        'access-check',
+        defaultsTo: true,
+        help:
+            'Firebase only: ask App Distribution whether the service account '
+            'can reach the app before building. Read-only.',
       )
       ..addFlag(
         'notify',
@@ -162,13 +171,14 @@ class ReleaseCommand extends Command<int> {
 
     GoogleServicesApp? firebaseApp;
     if (target == ReleaseTarget.firebase &&
-        app.firebase?.androidAppIdRef == null) {
+        app.firebaseAndroidAppIdVariable(flavor) == null) {
       firebaseApp = _firebaseApp(flavor);
       if (firebaseApp == null) return ShipwayExit.userError;
     }
 
-    final missing = await _missingSecrets(config, target);
-    if (missing.isNotEmpty) {
+    final credentials = await _credentials(config, target, flavor);
+    if (credentials.missing.isNotEmpty) {
+      final missing = credentials.missing;
       logger.err(
         '${missing.length} required '
         '${missing.length == 1 ? 'credential is' : 'credentials are'} not '
@@ -194,14 +204,42 @@ class ReleaseCommand extends Command<int> {
       return ShipwayExit.environmentError;
     }
 
+    final upload = target == ReleaseTarget.firebase
+        ? await _firebaseUpload(
+            app,
+            flavor,
+            firebaseApp,
+            credentials.environment,
+            checkAccess: results['access-check'] as bool,
+          )
+        : null;
+
     _printPlan(
       app,
       flavor,
       target,
       results,
       firebaseApp: firebaseApp,
+      upload: upload,
       toolchain: probe.toolchain!,
     );
+
+    if (upload != null) {
+      final refused = upload.problem;
+      if (refused != null) {
+        logger
+          ..info('')
+          ..err(refused.what)
+          ..info('  ${refused.fix}');
+        return ShipwayExit.environmentError;
+      }
+      final mismatch = upload.projectMismatch;
+      if (mismatch != null) {
+        logger
+          ..info('')
+          ..warn(mismatch);
+      }
+    }
 
     if (results['dry-run'] as bool) {
       logger
@@ -234,6 +272,7 @@ class ReleaseCommand extends Command<int> {
       flavor,
       results,
       firebaseApp: firebaseApp,
+      environment: credentials.environment,
     );
 
     notifier?.stepFinished(
@@ -372,10 +411,19 @@ class ReleaseCommand extends Command<int> {
     return null;
   }
 
-  /// The credentials this target needs that are not resolvable.
-  Future<List<String>> _missingSecrets(
+  /// The credentials this release needs: which are missing, and the values of
+  /// those that were found, for the lane.
+  ///
+  /// The values are what make the pre-flight honest. It used to find a
+  /// variable in `.env` or the keychain and report it present, while the lane
+  /// — a separate process that reads only its own environment — still failed
+  /// on it. Paths are made absolute, because the lane runs from the platform
+  /// directory and a path relative to the project root misses from there.
+  Future<({List<String> missing, Map<String, String> environment})>
+  _credentials(
     ShipwayConfig config,
     ReleaseTarget target,
+    ResolvedFlavor flavor,
   ) async {
     final context = _context;
     final resolver = SecretResolver(
@@ -383,22 +431,148 @@ class ReleaseCommand extends Command<int> {
       projectRoot: context.projectRoot,
       runner: context.runner,
       redactor: context.redactor,
+      processEnvironment: context.processEnvironment,
+      flavor: flavor.name,
       host: context.host,
     );
+    // Scoped to this destination and this flavor: demanding an App Store
+    // Connect key before a Play upload, or the prod Firebase account for a dev
+    // build, is noise, and noise in a pre-flight is how people learn to ignore
+    // it.
     final requirements = SecretRequirements.of(
       config,
       environment: context.environment.environment,
       appId: context.appId,
-    );
-    // Scoped to this destination: demanding an App Store Connect key before a
-    // Play upload is noise, and noise in a pre-flight is how people learn to
-    // ignore it.
-    final relevant = requirements.where((r) => r.appliesTo(target.id));
-    final statuses = await resolver.statuses(relevant);
-    return <String>[
+      flavor: flavor.name,
+    ).where((r) => r.appliesTo(target.id));
+    final statuses = await resolver.statuses(requirements);
+
+    final missing = <String>[
       for (final status in statuses)
         if (status.blocks) status.name,
     ];
+    final environment = <String, String>{};
+    if (missing.isEmpty) {
+      for (final status in statuses) {
+        if (!status.source.found) continue;
+        final value = await resolver.read(status.name);
+        if (value == null) continue;
+        environment[status.name] =
+            status.requirement.isPath && !p.isAbsolute(value)
+            ? p.join(context.projectRoot, value)
+            : value;
+      }
+    }
+    return (missing: missing, environment: environment);
+  }
+
+  /// Who is about to upload to Firebase, to which project, and whether App
+  /// Distribution will let them.
+  ///
+  /// A field report learned all three at the upload, after a full build: the
+  /// default service account belonged to neither of the two Firebase projects
+  /// its flavors lived in, and the only message was a 403.
+  Future<_FirebaseUpload> _firebaseUpload(
+    ResolvedApp app,
+    ResolvedFlavor flavor,
+    GoogleServicesApp? firebaseApp,
+    Map<String, String> environment, {
+    required bool checkAccess,
+  }) async {
+    final context = _context;
+    final variable = flavor.firebaseServiceAccountVariable;
+    final path = environment[variable];
+    final identity = path == null ? null : ServiceAccountIdentity.read(path);
+    final appIdVariable = app.firebaseAndroidAppIdVariable(flavor);
+    final appId =
+        firebaseApp?.appId ??
+        (appIdVariable == null ? null : environment[appIdVariable]);
+
+    // Both files say which project they belong to, so the likeliest cause of
+    // a refusal is visible before the network is asked anything. A warning,
+    // because an account can be granted access to another project.
+    final accountProject = identity?.projectId;
+    final appProject = firebaseApp?.projectId;
+    final mismatch =
+        accountProject != null &&
+            appProject != null &&
+            accountProject != appProject
+        ? 'The service account belongs to project $accountProject, but '
+              '${flavor.firebaseAndroid} is for $appProject. Unless it has '
+              'been granted access there, App Distribution will refuse the '
+              'upload.'
+        : null;
+
+    _FirebaseUpload notChecked(String why) => _FirebaseUpload(
+      variable: variable,
+      path: path,
+      identity: identity,
+      access: 'not checked ($why)',
+      projectMismatch: mismatch,
+    );
+
+    if (!checkAccess) return notChecked('--no-access-check');
+    if (path == null || appId == null) return notChecked('no app id');
+    final script = FirebaseAccessCheck.locateScript();
+    if (script == null) {
+      return notChecked('shipway could not find its access check');
+    }
+
+    final access =
+        await FirebaseAccessCheck(
+          runner: context.runner,
+          scriptPath: script,
+        ).check(
+          directory: p.join(context.projectRoot, 'android'),
+          serviceAccountPath: path,
+          appId: appId,
+          environment: environment,
+        );
+
+    final who = identity?.email ?? 'The service account in $path';
+    final project = appProject != null
+        ? 'project $appProject'
+        : 'Firebase project ${appId.split(':').elementAtOrNull(1) ?? appId}';
+
+    return _FirebaseUpload(
+      variable: variable,
+      path: path,
+      identity: identity,
+      projectMismatch: mismatch,
+      access: switch (access.outcome) {
+        FirebaseAccessOutcome.ok => 'ok',
+        FirebaseAccessOutcome.denied => 'refused',
+        FirebaseAccessOutcome.appNotFound => 'app not found',
+        FirebaseAccessOutcome.badCredentials => 'credentials rejected',
+        FirebaseAccessOutcome.unknown =>
+          'unknown — ${access.message ?? 'no answer'}; continuing',
+      },
+      problem: switch (access.outcome) {
+        FirebaseAccessOutcome.ok || FirebaseAccessOutcome.unknown => null,
+        FirebaseAccessOutcome.denied => (
+          what: '$who cannot reach $appId (HTTP ${access.status}).',
+          fix:
+              'Grant it the Firebase App Distribution Admin role '
+              '(roles/firebaseappdistro.admin) in $project, under IAM in the '
+              'Google Cloud console — or point $variable at a service account '
+              'from that project.',
+        ),
+        FirebaseAccessOutcome.appNotFound => (
+          what: 'App Distribution has no app $appId.',
+          fix:
+              'Open App Distribution for $project in the Firebase console and '
+              'press "Get started", then check the app id above.',
+        ),
+        FirebaseAccessOutcome.badCredentials => (
+          what:
+              'The service account in $path could not authenticate: '
+              '${access.message}',
+          fix:
+              'Create a new key for ${identity?.email ?? 'that account'} in '
+              'the Google Cloud console and point $variable at it.',
+        ),
+      },
+    );
   }
 
   /// What is about to happen, printed whether or not it is a dry run.
@@ -411,9 +585,11 @@ class ReleaseCommand extends Command<int> {
     ReleaseTarget target,
     ArgResults results, {
     GoogleServicesApp? firebaseApp,
+    _FirebaseUpload? upload,
     required FastlaneToolchain toolchain,
   }) {
     final logger = _context.logger;
+    String dim(String? value) => darkGray.wrap(value ?? 'unknown') ?? '';
     final identifier = target.platform == 'ios'
         ? flavor.iosBundleId
         : flavor.androidApplicationId;
@@ -421,7 +597,7 @@ class ReleaseCommand extends Command<int> {
     logger
       ..info('')
       ..info('  flavor      ${flavor.name}')
-      ..info('  identifier  ${identifier ?? darkGray.wrap('not in config')}')
+      ..info('  identifier  ${identifier ?? dim('not in config')}')
       ..info('  target      ${target.id}');
 
     if (target == ReleaseTarget.play) {
@@ -443,19 +619,29 @@ class ReleaseCommand extends Command<int> {
     }
 
     if (target == ReleaseTarget.firebase) {
-      // Which Firebase app, and where that answer came from. Uploading to the
-      // wrong project's app is otherwise invisible until a tester says so.
-      final ref = app.firebase?.androidAppIdRef;
+      // Which app, which project, and whose account. Uploading with the wrong
+      // project's credentials is otherwise invisible until it is refused.
+      final ref = app.firebaseAndroidAppIdVariable(flavor);
       logger.info(
         firebaseApp != null
             ? '  app id      ${firebaseApp.appId}  '
-                  '${darkGray.wrap('from ${flavor.firebaseAndroid}')}'
-            : '  app id      ${darkGray.wrap('from \$$ref')}',
+                  '${dim('from ${flavor.firebaseAndroid}')}'
+            : '  app id      ${dim('from \$$ref')}',
       );
+      final project = firebaseApp?.projectId;
+      if (project != null) logger.info('  project     $project');
+      if (upload != null) {
+        logger
+          ..info(
+            '  account     ${upload.identity?.email ?? 'unreadable'}  '
+            '${dim('from \$${upload.variable} (${upload.path})')}',
+          )
+          ..info('  access      ${upload.access}');
+      }
       final groups = app.firebase?.groups ?? const <String>[];
       logger.info(
         '  groups      '
-        '${groups.isEmpty ? darkGray.wrap('none — uploaded, not distributed') : groups.join(', ')}',
+        '${groups.isEmpty ? dim('none — uploaded, not distributed') : groups.join(', ')}',
       );
     }
 
@@ -468,7 +654,6 @@ class ReleaseCommand extends Command<int> {
 
     // Which Ruby and which fastlane is the first question about a lane that
     // failed, and `bundle exec` makes it easy to be wrong about.
-    String dim(String? value) => darkGray.wrap(value ?? 'unknown') ?? '';
     final pinned = toolchain.fastlane == FastlanePins.fastlane
         ? ''
         : '  ${dim('shipway pins ${FastlanePins.fastlane}')}';
@@ -485,6 +670,7 @@ class ReleaseCommand extends Command<int> {
     ResolvedFlavor flavor,
     ArgResults results, {
     GoogleServicesApp? firebaseApp,
+    required Map<String, String> environment,
   }) async {
     final context = _context;
     final logger = context.logger;
@@ -511,6 +697,7 @@ class ReleaseCommand extends Command<int> {
       'bundle',
       arguments,
       workingDirectory: directory,
+      environment: environment.isEmpty ? null : environment,
     );
 
     if (result.ok) {
@@ -547,4 +734,29 @@ class ReleaseCommand extends Command<int> {
       logger.info('  ${diagnosis.fix}');
     }
   }
+}
+
+/// What the plan says about a Firebase upload, and whether it may go ahead.
+class _FirebaseUpload {
+  const _FirebaseUpload({
+    required this.variable,
+    required this.access,
+    this.path,
+    this.identity,
+    this.problem,
+    this.projectMismatch,
+  });
+
+  /// The variable the service-account path came from.
+  final String variable;
+  final String? path;
+  final ServiceAccountIdentity? identity;
+
+  /// One line for the plan.
+  final String access;
+
+  /// Why the upload would be refused, when the check says so.
+  final ({String what, String fix})? problem;
+
+  final String? projectMismatch;
 }

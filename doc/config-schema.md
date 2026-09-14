@@ -43,6 +43,9 @@ apps:                         # keyed by app id; a single-app repo uses `main`
         firebase:
           android: android/app/src/dev/google-services.json
           ios: ios/config/dev/GoogleService-Info.plist
+          distribution:                # App Distribution credentials, when this flavor's differ
+            service_account_ref: FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH  # names a path
+            android_app_id_ref: FB_DEV_ANDROID_APP_ID  # optional; wins over targets.firebase
       prod:
         suffix: ""                     # the unsuffixed production flavor
         display_name: "Acme"
@@ -245,6 +248,25 @@ their paths.
 distributed — shipway no longer invents a `testers` group, which App
 Distribution rejects in any project without one. `changelog_from` works as it
 does for TestFlight; with no notes, the flavor and commit are used.
+
+**Credentials per flavor.** Flavors in separate Firebase projects need separate
+service accounts, because one project's account is refused by the other. Set
+`flavors.<name>.firebase.distribution.service_account_ref` to the variable
+holding that flavor's service-account *path*; flavors without one use
+`FIREBASE_SERVICE_ACCOUNT_JSON_PATH`. `distribution.android_app_id_ref` does the
+same for the app id, and wins over the target's. The pre-flight asks only for the
+flavor being shipped, and `shipway secrets export` names a content secret for
+each account (`FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH` →
+`FIREBASE_DEV_SERVICE_ACCOUNT_JSON`), which the generated workflow writes to a
+file.
+
+**Checked before building.** `shipway release` prints the account's email and the
+app's project, warns when the service account belongs to a different project
+than the `google-services.json`, and asks App Distribution — one read-only call,
+from the project's bundle — whether the account can reach the app. A refusal
+stops the release before the build and names the account, the project and the
+role it needs (Firebase App Distribution Admin). `--no-access-check` skips the
+call.
 
 ## `ios.export` — who exports the `.ipa`
 

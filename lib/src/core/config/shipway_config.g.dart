@@ -236,17 +236,60 @@ Map<String, dynamic> _$FlavorConfigToJson(FlavorConfig instance) =>
 
 FirebaseFlavorConfig _$FirebaseFlavorConfigFromJson(Map json) =>
     $checkedCreate('FirebaseFlavorConfig', json, ($checkedConvert) {
-      $checkKeys(json, allowedKeys: const ['android', 'ios']);
+      $checkKeys(json, allowedKeys: const ['android', 'ios', 'distribution']);
       final val = FirebaseFlavorConfig(
         android: $checkedConvert('android', (v) => v as String?),
         ios: $checkedConvert('ios', (v) => v as String?),
+        distribution: $checkedConvert(
+          'distribution',
+          (v) =>
+              v == null ? null : FirebaseDistributionConfig.fromJson(v as Map),
+        ),
       );
       return val;
     });
 
 Map<String, dynamic> _$FirebaseFlavorConfigToJson(
   FirebaseFlavorConfig instance,
-) => <String, dynamic>{'android': ?instance.android, 'ios': ?instance.ios};
+) => <String, dynamic>{
+  'android': ?instance.android,
+  'ios': ?instance.ios,
+  'distribution': ?instance.distribution?.toJson(),
+};
+
+FirebaseDistributionConfig _$FirebaseDistributionConfigFromJson(Map json) =>
+    $checkedCreate(
+      'FirebaseDistributionConfig',
+      json,
+      ($checkedConvert) {
+        $checkKeys(
+          json,
+          allowedKeys: const ['service_account_ref', 'android_app_id_ref'],
+        );
+        final val = FirebaseDistributionConfig(
+          serviceAccountRef: $checkedConvert(
+            'service_account_ref',
+            (v) => v as String?,
+          ),
+          androidAppIdRef: $checkedConvert(
+            'android_app_id_ref',
+            (v) => v as String?,
+          ),
+        );
+        return val;
+      },
+      fieldKeyMap: const {
+        'serviceAccountRef': 'service_account_ref',
+        'androidAppIdRef': 'android_app_id_ref',
+      },
+    );
+
+Map<String, dynamic> _$FirebaseDistributionConfigToJson(
+  FirebaseDistributionConfig instance,
+) => <String, dynamic>{
+  'service_account_ref': ?instance.serviceAccountRef,
+  'android_app_id_ref': ?instance.androidAppIdRef,
+};
 
 SigningConfig _$SigningConfigFromJson(Map json) =>
     $checkedCreate('SigningConfig', json, ($checkedConvert) {

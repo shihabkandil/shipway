@@ -273,6 +273,35 @@ abstract final class ErrorClassifier {
           'FIREBASE_SERVICE_ACCOUNT_JSON_PATH.',
     ),
 
+    // catalog: the plugin's own wording, read from 0.10.1. App Distribution
+    // answered 403, and the message names no account, project or role.
+    ErrorSignature(
+      id: 'firebase.permission_denied',
+      patterns: <Pattern>[
+        'does not have the required permissions on the Firebase project',
+      ],
+      summary:
+          'The Firebase service account may not upload to this app — most '
+          'often because it belongs to a different Firebase project.',
+      fix:
+          'Grant it the Firebase App Distribution Admin role in the app\'s '
+          'project, or set flavors.<flavor>.firebase.distribution.'
+          'service_account_ref to that project\'s account. `shipway release` '
+          'checks this before building.',
+    ),
+
+    // catalog: the plugin's own wording, read from 0.10.1.
+    ErrorSignature(
+      id: 'firebase.app_not_onboarded',
+      patterns: <Pattern>['App Distribution could not find your app'],
+      summary:
+          'App Distribution does not know this app id, or has not been set '
+          'up for the project.',
+      fix:
+          'Press "Get started" on the App Distribution page of the Firebase '
+          'console, and check the app id `shipway release` printed.',
+    ),
+
     // catalog: Phase 4 store failures. The stores' own messages are unusually
     // bad at naming what to change, which is the whole reason these exist.
     ErrorSignature(

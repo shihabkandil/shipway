@@ -72,7 +72,11 @@ class AndroidFastfileGenerator extends Generator {
         app,
         (flavor) => <String, String>{
           'package_name': flavor.androidApplicationId ?? '',
-          if (firebase != null) 'google_services': flavor.firebaseAndroid ?? '',
+          if (firebase != null) ...<String, String>{
+            'google_services': flavor.firebaseAndroid ?? '',
+            'service_account_env': flavor.firebaseServiceAccountVariable,
+            'app_id_env': app.firebaseAndroidAppIdVariable(flavor) ?? '',
+          },
         },
       ),
       FastlaneRuby.helpers(),
@@ -84,7 +88,7 @@ class AndroidFastfileGenerator extends Generator {
       ),
       _artifactHelper(),
       if (firebase != null) ...<String>[
-        _firebaseAppIdHelper(firebase),
+        _firebaseAppIdHelper(),
         FastlaneRuby.changelog(
           source: firebase.changelogFrom,
           function: 'firebase_release_notes',
@@ -272,31 +276,25 @@ $keyPropertiesGuard
   /// An explicit `app_id:` always wins: it is how `shipway release` hands over
   /// the id it already checked and printed, so what the plan showed is what
   /// is used.
-  String _firebaseAppIdHelper(FirebaseTarget firebase) {
-    final ref = firebase.androidAppIdRef;
-    if (ref != null) {
-      return '''
-# targets.firebase.android_app_id_ref names where the app id is. A configured
-# name is authoritative: falling back to google-services.json when it is unset
-# would upload to an app nobody chose.
-def firebase_app_id(config, options)
-  explicit = options[:app_id].to_s.strip
-  return explicit unless explicit.empty?
-
-  require_env("$ref")
-  ENV.fetch("$ref")
-end
-''';
-    }
-    return r'''
+  String _firebaseAppIdHelper() => r'''
 require 'json'
 
-# The app id comes from the flavor's own google-services.json, matched on
-# package name. One file routinely lists every Android app in the Firebase
-# project, so the first entry is the right answer for only one flavor.
+# Which Firebase app a flavor uploads to.
+#
+# The variable the config names for the flavor comes first, and is
+# authoritative once named: falling back to a file when it is unset would
+# upload to an app nobody chose. Otherwise the flavor's own
+# google-services.json, matched on package name, because one file lists every
+# Android app in the Firebase project.
 def firebase_app_id(config, options)
   explicit = options[:app_id].to_s.strip
   return explicit unless explicit.empty?
+
+  variable = config[:app_id_env].to_s
+  unless variable.empty?
+    require_env(variable)
+    return ENV.fetch(variable)
+  end
 
   path = config[:google_services].to_s
   if path.empty?
@@ -318,7 +316,6 @@ def firebase_app_id(config, options)
   client.dig("client_info", "mobilesdk_app_id")
 end
 ''';
-  }
 
   String _firebaseLane(FirebaseTarget firebase) {
     final groups = firebase.groups;
@@ -333,7 +330,10 @@ end
   lane :firebase do |options|
     flavor = require_flavor(options)
     config = flavor_config(flavor)
-    require_env("$firebaseKeyEnv")
+    # Per flavor: flavors in separate Firebase projects need separate
+    # service accounts.
+    credentials = config[:service_account_env]
+    require_env(credentials)
 
     # Both before the build, so a missing app or notes that cannot be produced
     # fail in seconds rather than after the slowest part of the job.
@@ -353,7 +353,7 @@ end
     firebase_app_distribution(
       # A service-account file, not the deprecated CI token, which App
       # Distribution no longer accepts.
-      service_credentials_file: ENV.fetch("$firebaseKeyEnv"),
+      service_credentials_file: ENV.fetch(credentials),
       app: app_id,
       android_artifact_path: artifact,
       # The plugin spells these AAB and APK. `appbundle` is Flutter's word, and

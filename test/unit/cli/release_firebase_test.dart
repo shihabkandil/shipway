@@ -66,6 +66,14 @@ Map<String, Object> _client(String packageName, String appId) =>
       },
     };
 
+/// A service-account file as Google issues it, minus the key.
+String _account(String project, {String name = 'uploader'}) =>
+    jsonEncode(<String, String>{
+      'type': 'service_account',
+      'project_id': project,
+      'client_email': '$name@$project.iam.gserviceaccount.com',
+    });
+
 void main() {
   late FixtureProject project;
   late _CapturingLogger logger;
@@ -89,10 +97,11 @@ void main() {
         ],
       })
       ..write('.env', 'FIREBASE_SERVICE_ACCOUNT_JSON_PATH=firebase.json\n')
-      ..write('firebase.json', '{}');
+      ..write('firebase.json', _account('acme-dev'));
     logger = _CapturingLogger();
     runner = RecordingProcessRunner();
     stubFastlaneToolchain(runner);
+    runner.stub('firebase_access_check.rb', stdout: '{"ok":true}');
   });
 
   Future<int> run(List<String> args) =>
@@ -238,5 +247,140 @@ void main() {
     await run(<String>['--flavor', 'dev', '--dry-run']);
 
     expect(logger.output, contains('none — uploaded, not distributed'));
+  });
+
+  group('who uploads', () {
+    test(
+      'the plan names the account, where it came from, and the project',
+      () async {
+        final code = await run(<String>['--flavor', 'dev', '--dry-run']);
+
+        expect(code, ShipwayExit.success, reason: logger.output);
+        expect(
+          logger.output,
+          contains('uploader@acme-dev.iam.gserviceaccount.com'),
+        );
+        expect(
+          logger.output,
+          contains(r'from $FIREBASE_SERVICE_ACCOUNT_JSON_PATH'),
+        );
+        expect(logger.output, contains('project     acme-dev'));
+      },
+    );
+
+    test(
+      'a flavor can carry its own account, and then needs no default',
+      () async {
+        project
+          ..write(
+            'shipway.yaml',
+            _config().replaceFirst(
+              '          android: android/app/src/dev/google-services.json\n',
+              '          android: android/app/src/dev/google-services.json\n'
+                  '          distribution:\n'
+                  '            service_account_ref: '
+                  'FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH\n',
+            ),
+          )
+          ..write('.env', 'FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH=dev.json\n')
+          ..write('dev.json', _account('acme-dev', name: 'dev-uploader'));
+
+        final code = await run(<String>['--flavor', 'dev', '--dry-run']);
+
+        expect(code, ShipwayExit.success, reason: logger.output);
+        expect(logger.output, contains('dev-uploader@acme-dev'));
+        expect(
+          logger.output,
+          contains(r'from $FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH'),
+        );
+      },
+    );
+
+    test('the lane is handed the credentials the pre-flight found', () async {
+      // Found in .env, which the lane — a separate process — never reads.
+      runner.stub(BundledFastlane.loader);
+
+      await run(<String>['--flavor', 'dev', '--no-notify']);
+
+      final environment = runner.invocation(BundledFastlane.loader).environment;
+      // Absolute, because the lane runs from android/.
+      expect(
+        environment?['FIREBASE_SERVICE_ACCOUNT_JSON_PATH'],
+        '${project.path}/firebase.json',
+      );
+    });
+
+    test('an account from another project is pointed out', () async {
+      project.write('firebase.json', _account('acme-prod'));
+
+      await run(<String>['--flavor', 'dev', '--dry-run']);
+
+      expect(logger.output, contains('belongs to project acme-prod'));
+      expect(logger.output, contains('is for acme-dev'));
+    });
+  });
+
+  group('whether it may', () {
+    test(
+      'a refusal stops before the build, naming who, where and the role',
+      () async {
+        runner
+          ..stub(
+            'firebase_access_check.rb',
+            stdout:
+                '{"ok":false,"stage":"api","status":403,'
+                '"message":"The caller does not have permission"}',
+          )
+          ..stub(BundledFastlane.loader);
+
+        final code = await run(<String>['--flavor', 'dev', '--no-notify']);
+
+        expect(code, ShipwayExit.environmentError);
+        expect(
+          logger.output,
+          contains(
+            'uploader@acme-dev.iam.gserviceaccount.com cannot reach '
+            '1:111:android:dev',
+          ),
+        );
+        expect(logger.output, contains('Firebase App Distribution Admin'));
+        expect(logger.output, contains('in project acme-dev'));
+        expect(runner.ran(BundledFastlane.loader), isFalse);
+      },
+    );
+
+    test('an app App Distribution does not know', () async {
+      runner.stub(
+        'firebase_access_check.rb',
+        stdout: '{"ok":false,"stage":"api","status":404}',
+      );
+
+      final code = await run(<String>['--flavor', 'dev', '--dry-run']);
+
+      expect(code, ShipwayExit.environmentError);
+      expect(logger.output, contains('has no app 1:111:android:dev'));
+      expect(logger.output, contains('Get started'));
+    });
+
+    test('is asked from the bundle, with the account and the app', () async {
+      await run(<String>['--flavor', 'dev', '--dry-run']);
+
+      final check = runner.invocation('firebase_access_check.rb');
+      expect(check.workingDirectory, endsWith('android'));
+      expect(
+        check.arguments,
+        containsAllInOrder(<String>[
+          '${project.path}/firebase.json',
+          '1:111:android:dev',
+        ]),
+      );
+    });
+
+    test('--no-access-check asks nothing', () async {
+      await run(<String>['--flavor', 'dev', '--dry-run', '--no-access-check']);
+
+      expect(runner.ran('firebase_access_check.rb'), isFalse);
+      expect(logger.output, contains('not checked (--no-access-check)'));
+    });
   });
 }

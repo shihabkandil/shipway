@@ -74,5 +74,7 @@ abstract final class ResolveApp {
     iosBundleId: iosBase == null ? null : '$iosBase${flavor.suffix}',
     firebaseAndroid: flavor.firebase?.android,
     firebaseIos: flavor.firebase?.ios,
+    firebaseServiceAccountRef: flavor.firebase?.distribution?.serviceAccountRef,
+    firebaseAndroidAppIdRef: flavor.firebase?.distribution?.androidAppIdRef,
   );
 }

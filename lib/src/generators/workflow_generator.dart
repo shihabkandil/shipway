@@ -275,14 +275,28 @@ ${_androidSigningStep(app)}${_playKeyStep(app)}${_firebaseKeyStep(app)}
   /// longer accepts the old CI token, so the file has to be there.
   String _firebaseKeyStep(ResolvedApp app) {
     if (app.firebase == null) return '';
-    return '''
-      - name: Materialise the Firebase service account
-        run: echo "\$${SecretNames.firebaseServiceAccountJson}" > "\$GITHUB_WORKSPACE/firebase.json"
+    return <String>[
+      for (final variable in _firebaseAccounts(app))
+        '''
+      - name: Materialise the Firebase service account${variable == SecretNames.firebaseServiceAccountPath ? '' : ' for $variable'}
+        run: echo "\$${SecretNames.contentSecretFor(variable)}" > "\$GITHUB_WORKSPACE/${_firebaseFile(variable)}"
         env:
-          ${SecretNames.firebaseServiceAccountJson}: \${{ secrets.${SecretNames.firebaseServiceAccountJson} }}
+          ${SecretNames.contentSecretFor(variable)}: \${{ secrets.${SecretNames.contentSecretFor(variable)} }}
 
-''';
+''',
+    ].join();
   }
+
+  /// One per distinct variable: flavors in separate Firebase projects name
+  /// separate accounts, and the runner may be asked to ship any flavor.
+  static Set<String> _firebaseAccounts(ResolvedApp app) => <String>{
+    for (final flavor in app.flavors) flavor.firebaseServiceAccountVariable,
+  };
+
+  static String _firebaseFile(String variable) =>
+      variable == SecretNames.firebaseServiceAccountPath
+      ? 'firebase.json'
+      : '${variable.toLowerCase()}.json';
 
   /// The Play service account is a *file path*, so the file has to exist.
   ///
@@ -357,13 +371,18 @@ ${_androidSigningStep(app)}${_playKeyStep(app)}${_firebaseKeyStep(app)}
     }
 
     if (app.firebase != null) {
-      lines.add(
-        '${SecretNames.firebaseServiceAccountPath}: '
-        '\${{ github.workspace }}/firebase.json',
-      );
+      for (final variable in _firebaseAccounts(app)) {
+        lines.add(
+          '$variable: \${{ github.workspace }}/${_firebaseFile(variable)}',
+        );
+      }
+      for (final variable in <String>{
+        for (final flavor in app.flavors)
+          if (app.firebaseAndroidAppIdVariable(flavor) case final name?) name,
+      }) {
+        secret(variable);
+      }
     }
-    final firebase = app.firebase?.androidAppIdRef;
-    if (firebase != null) secret(firebase);
 
     return lines.isEmpty ? <String>['# Nothing configured yet.'] : lines;
   }

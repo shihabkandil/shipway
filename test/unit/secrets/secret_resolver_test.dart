@@ -227,4 +227,27 @@ WITH_EQUALS=a=b=c
       expect(values, isEmpty);
     });
   });
+
+  test('a flavor file layers over .env rather than replacing it', () async {
+    // Shared values live in .env and the flavor's file only overrides. Reading
+    // one or the other reported a variable missing that was set where people
+    // actually keep it.
+    project
+      ..write('.env', 'MATCH_PASSWORD=shared\nMATCH_GIT_BRANCH=main\n')
+      ..write('.env.dev', 'MATCH_PASSWORD=dev\n');
+    final layered = resolver(flavor: 'dev');
+
+    expect(await layered.read('MATCH_PASSWORD'), 'dev');
+    expect((await layered.status(plain)).detail, '.env.dev');
+
+    final shared = await layered.status(
+      const SecretRequirement(
+        name: 'MATCH_GIT_BRANCH',
+        need: Need.required,
+        wantedBy: 'the match repository',
+      ),
+    );
+    expect(shared.source, SecretSource.dotenv);
+    expect(shared.detail, '.env');
+  });
 }

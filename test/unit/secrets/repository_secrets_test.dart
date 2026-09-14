@@ -168,4 +168,36 @@ void main() {
       );
     });
   });
+
+  test('a flavor\'s own Firebase account reaches the workflow too', () {
+    final perFlavor = ConfigLoader.parse('''
+version: 1
+project:
+  name: acme_app
+apps:
+  main:
+    path: .
+    android:
+      application_id: com.acme.app
+    flavors:
+      dev:
+        suffix: .dev
+        firebase:
+          distribution:
+            service_account_ref: FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH
+            android_app_id_ref: FB_DEV_APP_ID
+      prod:
+        suffix: ""
+    targets:
+      firebase:
+        groups: [qa]
+''');
+    final exported = RepositorySecrets.of(perFlavor).map((s) => s.name).toSet();
+
+    expect(exported, workflowSecrets(perFlavor));
+    // The content secret for a path the config named itself.
+    expect(exported, contains('FIREBASE_DEV_SERVICE_ACCOUNT_JSON'));
+    expect(exported, contains('FIREBASE_SERVICE_ACCOUNT_JSON'));
+    expect(exported, contains('FB_DEV_APP_ID'));
+  });
 }

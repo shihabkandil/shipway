@@ -70,6 +70,7 @@ abstract final class SecretRequirements {
     ShipwayConfig config, {
     required RunEnvironment environment,
     String? appId,
+    String? flavor,
   }) {
     final app = config.appOrNull(appId ?? config.defaultAppId);
     if (app == null) return const <SecretRequirement>[];
@@ -212,21 +213,34 @@ abstract final class SecretRequirements {
 
     final firebase = app.targets.firebase;
     if (firebase != null) {
-      add(
-        SecretNames.firebaseServiceAccountPath,
-        Need.required,
-        'the firebase lane',
-        isPath: true,
-        targets: const <String>{'firebase'},
-      );
-      final androidAppId = firebase.androidAppIdRef;
-      if (androidAppId != null) {
+      // Per flavor, because flavors in separate Firebase projects carry
+      // separate accounts. Scoped to [flavor] when one is being shipped;
+      // otherwise every flavor's, which is what a CI repository needs.
+      final names = flavor != null
+          ? <String>[flavor]
+          : (app.flavors.isEmpty ? const <String>[''] : app.flavors.keys);
+      for (final name in names) {
+        final account = app.firebaseServiceAccountVariable(name);
         add(
-          androidAppId,
+          account,
           Need.required,
-          'the firebase lane',
+          account == SecretNames.firebaseServiceAccountPath
+              ? 'the firebase lane'
+              : 'flavors.$name.firebase.distribution.service_account_ref',
+          isPath: true,
           targets: const <String>{'firebase'},
         );
+        final appId = app.firebaseAndroidAppIdVariable(name);
+        if (appId != null) {
+          add(
+            appId,
+            Need.required,
+            appId == firebase.androidAppIdRef
+                ? 'targets.firebase.android_app_id_ref'
+                : 'flavors.$name.firebase.distribution.android_app_id_ref',
+            targets: const <String>{'firebase'},
+          );
+        }
       }
 
       // Optional until something reads it. There is no iOS App Distribution

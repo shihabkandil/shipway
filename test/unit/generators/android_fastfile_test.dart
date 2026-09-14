@@ -238,8 +238,41 @@ void main() {
       final fastfile = firebase(
         const FirebaseTarget(androidAppIdRef: 'FB_ANDROID_APP_ID'),
       );
-      expect(fastfile, contains('require_env("FB_ANDROID_APP_ID")'));
-      expect(fastfile, isNot(contains('mobilesdk_app_id')));
+      expect(fastfile, contains('app_id_env: "FB_ANDROID_APP_ID"'));
+      // Required once named, rather than quietly falling back to the file.
+      expect(fastfile, contains('require_env(variable)'));
+    });
+
+    test('each flavor reads its own account and app id', () {
+      // Flavors in separate Firebase projects: one account cannot upload to
+      // both, and the field report's dev and prod were exactly that.
+      final fastfile = render(
+        const ResolvedApp(
+          appId: 'main',
+          projectName: 'acme_app',
+          androidApplicationId: 'com.acme.app',
+          iosBundleId: 'com.acme.app',
+          gradleDsl: GradleDsl.kotlin,
+          firebase: FirebaseTarget(androidAppIdRef: 'FB_ANDROID_APP_ID'),
+          flavors: <ResolvedFlavor>[
+            ResolvedFlavor(
+              name: 'dev',
+              suffix: '.dev',
+              entrypoint: 'lib/main_dev.dart',
+              dimension: 'environment',
+              androidApplicationId: 'com.acme.app.dev',
+              firebaseServiceAccountRef: 'FIREBASE_DEV_SERVICE_ACCOUNT_PATH',
+              firebaseAndroidAppIdRef: 'FB_DEV_APP_ID',
+            ),
+          ],
+        ),
+      );
+      expect(
+        fastfile,
+        contains('service_account_env: "FIREBASE_DEV_SERVICE_ACCOUNT_PATH"'),
+      );
+      expect(fastfile, contains('app_id_env: "FB_DEV_APP_ID"'));
+      expect(lane(fastfile), contains('ENV.fetch(credentials)'));
     });
 
     test('an app id handed to the lane wins', () {

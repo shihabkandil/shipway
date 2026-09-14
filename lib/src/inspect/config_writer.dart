@@ -143,6 +143,16 @@ abstract final class ConfigWriter {
       if (firebase.ios != null) {
         out.writeln('          ios: ${_scalar(firebase.ios!)}');
       }
+      final distribution = firebase.distribution;
+      if (distribution != null) {
+        out.writeln('          distribution:');
+        if (distribution.serviceAccountRef case final ref?) {
+          out.writeln('            service_account_ref: ${_scalar(ref)}');
+        }
+        if (distribution.androidAppIdRef case final ref?) {
+          out.writeln('            android_app_id_ref: ${_scalar(ref)}');
+        }
+      }
     }
   }
 

@@ -119,6 +119,7 @@ class SecretsCommand extends Command<int> {
       config,
       environment: environment.environment,
       appId: context.appId,
+      flavor: results['flavor'] as String?,
     );
     // `set` and `import` come before the empty-list shortcut: a config that
     // declares nothing yet is a reason not to validate a name, not a reason to

@@ -61,12 +61,18 @@ abstract final class SecretNames {
 
   /// The repository secret that supplies [pathVariable]'s content, if the
   /// variable is one a workflow materialises into a file.
-  static String? contentSecretFor(String pathVariable) =>
-      switch (pathVariable) {
-        playServiceAccountPath => playServiceAccountJson,
-        firebaseServiceAccountPath => firebaseServiceAccountJson,
-        _ => null,
-      };
+  ///
+  /// A variable the config names itself — a flavor's own Firebase account —
+  /// follows the same convention: `_PATH` dropped, or `_CONTENT` added.
+  static String contentSecretFor(String pathVariable) => switch (pathVariable) {
+    playServiceAccountPath => playServiceAccountJson,
+    firebaseServiceAccountPath => firebaseServiceAccountJson,
+    _ when pathVariable.endsWith('_PATH') => pathVariable.substring(
+      0,
+      pathVariable.length - '_PATH'.length,
+    ),
+    _ => '${pathVariable}_CONTENT',
+  };
 
   /// Password for the dedicated keychain shipway creates off-workstation.
   static const String keychainPassword = 'SHIPWAY_KEYCHAIN_PASSWORD';

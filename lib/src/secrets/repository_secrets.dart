@@ -39,7 +39,7 @@ abstract final class RepositorySecrets {
       if (!requirement.isRequired) continue;
 
       final name = requirement.isPath
-          ? SecretNames.contentSecretFor(requirement.name) ?? requirement.name
+          ? SecretNames.contentSecretFor(requirement.name)
           : requirement.name;
       byName.putIfAbsent(
         name,

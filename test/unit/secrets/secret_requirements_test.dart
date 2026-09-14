@@ -251,4 +251,74 @@ void main() {
       }
     });
   });
+
+  group('Firebase credentials per flavor', () {
+    ShipwayConfig twoProjects() => configFrom(<String, dynamic>{
+      'main': <String, dynamic>{
+        'android': <String, dynamic>{'application_id': 'com.acme.app'},
+        'flavors': <String, dynamic>{
+          'dev': <String, dynamic>{
+            'suffix': '.dev',
+            'firebase': <String, dynamic>{
+              'distribution': <String, dynamic>{
+                'service_account_ref': 'FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH',
+              },
+            },
+          },
+          'prod': <String, dynamic>{
+            'suffix': '',
+            'firebase': <String, dynamic>{
+              'distribution': <String, dynamic>{
+                'service_account_ref':
+                    'FIREBASE_PROD_SERVICE_ACCOUNT_JSON_PATH',
+                'android_app_id_ref': 'FB_PROD_APP_ID',
+              },
+            },
+          },
+        },
+        'targets': <String, dynamic>{
+          'firebase': <String, dynamic>{
+            'groups': <String>['qa'],
+          },
+        },
+      },
+    });
+
+    test('shipping one flavor asks for that flavor\'s account only', () {
+      final names = namesOf(
+        SecretRequirements.of(
+          twoProjects(),
+          environment: RunEnvironment.workstation,
+          flavor: 'dev',
+        ),
+      );
+      expect(names, contains('FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH'));
+      expect(names, isNot(contains('FIREBASE_PROD_SERVICE_ACCOUNT_JSON_PATH')));
+      expect(names, isNot(contains('FB_PROD_APP_ID')));
+      // Nothing uses the default here, so nothing may demand it.
+      expect(names, isNot(contains(SecretNames.firebaseServiceAccountPath)));
+    });
+
+    test('with no flavor given, every flavor\'s', () {
+      expect(
+        namesOf(requirementsFor(twoProjects())),
+        containsAll(<String>[
+          'FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH',
+          'FIREBASE_PROD_SERVICE_ACCOUNT_JSON_PATH',
+          'FB_PROD_APP_ID',
+        ]),
+      );
+    });
+
+    test('an account is checked as a path and says where it came from', () {
+      final dev = requirementsFor(
+        twoProjects(),
+      ).firstWhere((r) => r.name == 'FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH');
+      expect(dev.isPath, isTrue);
+      expect(
+        dev.wantedBy,
+        'flavors.dev.firebase.distribution.service_account_ref',
+      );
+    });
+  });
 }

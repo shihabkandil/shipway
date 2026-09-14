@@ -633,6 +633,7 @@ runs the same generated lane you could run by hand.
 | `--version-name <v>` | Use this instead of `pubspec.yaml`. |
 | `--dry-run` | Validate and print the plan, upload nothing. |
 | `--no-notify` | Post nothing to Slack for this release. |
+| `--no-access-check` | Firebase only: skip asking App Distribution whether the service account can reach the app. |
 
 Everything cheap happens first. A target the config never configured, a flag
 belonging to another target, a rollout out of range, a credential that is not
@@ -670,7 +671,29 @@ the release in a second rather than after the build.
 
 **The credential check is scoped to the destination.** Releasing to Play does
 not ask for an App Store Connect key — noise in a pre-flight is how people
-learn to ignore it.
+learn to ignore it. It is scoped to the flavor too: shipping `dev` does not ask
+for the production Firebase account.
+
+**The lane gets what the pre-flight found.** A credential found in `.env`,
+`.env.<flavor>` or the keychain is passed to the lane's environment, with paths
+made absolute. The lane is a separate process: before this, the pre-flight could
+report a variable present that the lane then could not see.
+
+**A Firebase release checks who is uploading.** The plan shows the service
+account's email, the variable it came from and the app's project; a service
+account from a different project than the `google-services.json` is warned
+about; and a read-only App Distribution call confirms the account may reach the
+app. A 403 stops the release before anything is built:
+
+```
+  account     uploader@acme-dev.iam.gserviceaccount.com  from $FIREBASE_SERVICE_ACCOUNT_JSON_PATH
+  access      refused
+
+uploader@acme-dev.iam.gserviceaccount.com cannot reach 1:111:android:abc (HTTP 403).
+  Grant it the Firebase App Distribution Admin role (roles/firebaseappdistro.admin)
+  in project acme-app, under IAM in the Google Cloud console — or point
+  FIREBASE_SERVICE_ACCOUNT_JSON_PATH at a service account from that project.
+```
 
 ### Build numbers
 

@@ -1,6 +1,8 @@
 import 'package:collection/collection.dart';
 import 'package:json_annotation/json_annotation.dart';
 
+import '../secrets/secret_names.dart';
+
 part 'shipway_config.g.dart';
 
 /// The root of `shipway.yaml`.
@@ -135,6 +137,21 @@ class AppConfig {
       targets.testflight != null ||
       targets.appstore != null;
 
+  /// The variable naming [flavor]'s Firebase service-account *path*.
+  ///
+  /// Decided once, because the pre-flight, the lane and the CI workflow must
+  /// all name the same variable — and flavors in separate Firebase projects
+  /// need separate accounts.
+  String firebaseServiceAccountVariable(String flavor) =>
+      flavors[flavor]?.firebase?.distribution?.serviceAccountRef ??
+      SecretNames.firebaseServiceAccountPath;
+
+  /// The variable naming [flavor]'s Android app id, or null when the id comes
+  /// from its `google-services.json`. A flavor's own wins over the target's.
+  String? firebaseAndroidAppIdVariable(String flavor) =>
+      flavors[flavor]?.firebase?.distribution?.androidAppIdRef ??
+      targets.firebase?.androidAppIdRef;
+
   Map<String, dynamic> toJson() => _$AppConfigToJson(this);
 }
 
@@ -245,7 +262,7 @@ class FlavorConfig {
 
 @JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
 class FirebaseFlavorConfig {
-  const FirebaseFlavorConfig({this.android, this.ios});
+  const FirebaseFlavorConfig({this.android, this.ios, this.distribution});
 
   factory FirebaseFlavorConfig.fromJson(Map<dynamic, dynamic> json) =>
       _$FirebaseFlavorConfigFromJson(json);
@@ -256,7 +273,35 @@ class FirebaseFlavorConfig {
   /// Path to this flavor's `GoogleService-Info.plist`.
   final String? ios;
 
+  /// App Distribution credentials for this flavor, when they differ from the
+  /// default. Flavors in separate Firebase projects need separate service
+  /// accounts: one project's account is refused by the other.
+  final FirebaseDistributionConfig? distribution;
+
   Map<String, dynamic> toJson() => _$FirebaseFlavorConfigToJson(this);
+}
+
+@JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
+class FirebaseDistributionConfig {
+  const FirebaseDistributionConfig({
+    this.serviceAccountRef,
+    this.androidAppIdRef,
+  });
+
+  factory FirebaseDistributionConfig.fromJson(Map<dynamic, dynamic> json) =>
+      _$FirebaseDistributionConfigFromJson(json);
+
+  /// Names a variable holding the *path* to this flavor's service-account
+  /// JSON. Defaults to `FIREBASE_SERVICE_ACCOUNT_JSON_PATH`.
+  @JsonKey(name: 'service_account_ref')
+  final String? serviceAccountRef;
+
+  /// Names a variable holding this flavor's Android app id. Wins over
+  /// `targets.firebase.android_app_id_ref` and the `google-services.json`.
+  @JsonKey(name: 'android_app_id_ref')
+  final String? androidAppIdRef;
+
+  Map<String, dynamic> toJson() => _$FirebaseDistributionConfigToJson(this);
 }
 
 @JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
@@ -785,6 +830,18 @@ Iterable<({String path, String? value})> secretRefsOf(
       path: '$base.targets.firebase.ios_app_id_ref',
       value: app.value.targets.firebase?.iosAppIdRef,
     );
+    for (final flavor in app.value.flavors.entries) {
+      final distribution = flavor.value.firebase?.distribution;
+      final path = '$base.flavors.${flavor.key}.firebase.distribution';
+      yield (
+        path: '$path.service_account_ref',
+        value: distribution?.serviceAccountRef,
+      );
+      yield (
+        path: '$path.android_app_id_ref',
+        value: distribution?.androidAppIdRef,
+      );
+    }
   }
 }
 

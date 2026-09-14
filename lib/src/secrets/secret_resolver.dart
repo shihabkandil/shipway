@@ -96,7 +96,7 @@ class SecretResolver {
 
   final Map<String, String> _processEnvironment;
 
-  Map<String, String>? _dotenv;
+  Map<String, ({String value, String file})>? _dotenv;
 
   /// Where each source may be consulted, in order, for this environment.
   ///
@@ -145,7 +145,9 @@ class SecretResolver {
       return SecretStatus(
         requirement: requirement,
         source: source,
-        detail: _describe(source),
+        detail: source == SecretSource.dotenv
+            ? (await _loadDotenv())[requirement.name]?.file
+            : _describe(source),
       );
     }
 
@@ -178,7 +180,7 @@ class SecretResolver {
   Future<String?> _read(String name, SecretSource source) async =>
       switch (source) {
         SecretSource.environment => _nonEmpty(_processEnvironment[name]),
-        SecretSource.dotenv => _nonEmpty((await _loadDotenv())[name]),
+        SecretSource.dotenv => _nonEmpty((await _loadDotenv())[name]?.value),
         SecretSource.keychain => await _readKeychain(name),
         // A prompt is not a lookup; it is what the caller does when the chain
         // runs out, and only where the environment allows it.
@@ -195,13 +197,25 @@ class SecretResolver {
   /// `.env.<flavor>` when a flavor is in play, otherwise `.env`.
   String get dotenvPath => flavor == null ? '.env' : '.env.$flavor';
 
-  Future<Map<String, String>> _loadDotenv() async {
+  /// `.env`, with `.env.<flavor>` layered over it when a flavor is in play.
+  ///
+  /// Layered rather than either-or. Teams keep what every flavor shares in
+  /// `.env` and what differs in the flavor's file; reading only the flavor's
+  /// file reported a variable missing that was set exactly where people put
+  /// it.
+  Future<Map<String, ({String value, String file})>> _loadDotenv() async {
     final cached = _dotenv;
     if (cached != null) return cached;
 
-    final file = File(p.join(projectRoot, dotenvPath));
-    if (!file.existsSync()) return _dotenv = const <String, String>{};
-    return _dotenv = parseDotenv(await file.readAsString());
+    final values = <String, ({String value, String file})>{};
+    for (final name in <String>['.env', if (flavor != null) '.env.$flavor']) {
+      final file = File(p.join(projectRoot, name));
+      if (!file.existsSync()) continue;
+      for (final entry in parseDotenv(await file.readAsString()).entries) {
+        values[entry.key] = (value: entry.value, file: name);
+      }
+    }
+    return _dotenv = values;
   }
 
   Future<String?> _readKeychain(String name) async {
