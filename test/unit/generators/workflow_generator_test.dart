@@ -309,6 +309,16 @@ void main() {
     });
   });
 
+  test('a project shipping only to Firebase runs the firebase lane', () {
+    // Running the play lane there fails at a Play credential the project was
+    // never going to have.
+    expect(
+      render(app(play: null)),
+      contains('bundle exec fastlane android firebase'),
+    );
+    expect(render(app()), contains('bundle exec fastlane android play'));
+  });
+
   test('a project with no flavors gets no workflow', () {
     expect(const WorkflowGenerator().render(app(flavors: false)), isEmpty);
   });

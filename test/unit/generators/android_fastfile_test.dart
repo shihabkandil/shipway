@@ -30,6 +30,7 @@ ResolvedApp app({
             androidApplicationId: androidApplicationId == null
                 ? null
                 : '$androidApplicationId.dev',
+            firebaseAndroid: 'android/app/src/dev/google-services.json',
           ),
         ],
 );
@@ -205,23 +206,94 @@ void main() {
   });
 
   group('the firebase lane', () {
-    test('is absent unless an app id is configured', () {
-      expect(render(app()), isNot(contains('firebase_app_distribution')));
+    String firebase(FirebaseTarget target) => render(app(firebase: target));
+
+    /// Just the lane, so an assertion about it cannot be satisfied by a
+    /// helper defined elsewhere in the file.
+    String lane(String fastfile) {
+      final start = fastfile.indexOf('lane :firebase');
+      return fastfile.substring(start, fastfile.indexOf('\n  end\n', start));
+    }
+
+    test('is absent unless targets.firebase is configured', () {
+      expect(render(app()), isNot(contains('lane :firebase')));
+      expect(render(app()), isNot(contains('google_services:')));
+    });
+
+    test('needs no app id variable', () {
+      // It used to be left out, silently, unless android_app_id_ref was set:
+      // a config asked for Firebase and the Fastfile had no way to get there.
+      final fastfile = firebase(const FirebaseTarget());
+      expect(fastfile, contains('lane :firebase'));
+      expect(
+        fastfile,
+        contains('google_services: "android/app/src/dev/google-services.json"'),
+      );
+      expect(fastfile, contains('mobilesdk_app_id'));
+      // Matched on the package: one file lists every app in the project.
+      expect(fastfile, contains('== config[:package_name]'));
+    });
+
+    test('a configured app id variable is authoritative', () {
+      final fastfile = firebase(
+        const FirebaseTarget(androidAppIdRef: 'FB_ANDROID_APP_ID'),
+      );
+      expect(fastfile, contains('require_env("FB_ANDROID_APP_ID")'));
+      expect(fastfile, isNot(contains('mobilesdk_app_id')));
+    });
+
+    test('an app id handed to the lane wins', () {
+      // How `shipway release` makes the id it printed the id it uses.
+      expect(firebase(const FirebaseTarget()), contains('options[:app_id]'));
     });
 
     test('uses a service account, never the deprecated token', () {
-      final fastfile = render(
-        app(
-          firebase: const FirebaseTarget(
-            androidAppIdRef: 'FB_ANDROID_APP_ID',
-            groups: <String>['testers', 'qa'],
-          ),
-        ),
-      );
+      final fastfile = firebase(const FirebaseTarget());
       expect(fastfile, contains('service_credentials_file:'));
       expect(fastfile, isNot(contains('firebase_cli_token')));
-      expect(fastfile, contains('groups: "testers,qa"'));
-      expect(fastfile, contains('ENV.fetch("FB_ANDROID_APP_ID")'));
+    });
+
+    test('distributes to the configured groups and invents none', () {
+      expect(
+        firebase(const FirebaseTarget(groups: <String>['testers', 'qa'])),
+        contains('groups: "testers,qa"'),
+      );
+      // A made-up default group fails in any project that has no group by
+      // that name, and only after the build.
+      expect(
+        lane(firebase(const FirebaseTarget())),
+        isNot(contains('groups:')),
+      );
+    });
+
+    test('spells the artifact type the way the plugin does', () {
+      final fastfile = lane(firebase(const FirebaseTarget()));
+      expect(fastfile, contains('type == "appbundle" ? "AAB" : "APK"'));
+      expect(fastfile, isNot(contains('.upcase')));
+    });
+
+    test('resolves the app and the notes before building', () {
+      final fastfile = lane(firebase(const FirebaseTarget()));
+      final build = fastfile.indexOf('artifact = build(');
+      expect(fastfile.indexOf('firebase_app_id('), lessThan(build));
+      expect(fastfile.indexOf('firebase_release_notes('), lessThan(build));
+    });
+
+    test('takes its notes from changelog_from', () {
+      expect(
+        firebase(const FirebaseTarget(changelogFrom: ChangelogSource.file)),
+        contains('# targets.firebase.changelog_from: file'),
+      );
+      expect(
+        lane(firebase(const FirebaseTarget())),
+        contains('release_notes: notes ||'),
+      );
+    });
+
+    test('passes a requested version through to the build', () {
+      final fastfile = lane(firebase(const FirebaseTarget()));
+      expect(fastfile, contains('version_name: options[:version_name]'));
+      expect(fastfile, contains('build_number: options[:build_number]'));
     });
   });
 

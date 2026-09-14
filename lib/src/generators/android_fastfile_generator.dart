@@ -64,29 +64,45 @@ class AndroidFastfileGenerator extends Generator {
     ];
   }
 
-  String _render(ResolvedApp app) => <String>[
-    FastlaneRuby.header('android'),
-    FastlaneRuby.flavorTable(
-      app,
-      (flavor) => <String, String>{
-        'package_name': flavor.androidApplicationId ?? '',
-      },
-    ),
-    FastlaneRuby.helpers(),
-    FastlaneRuby.flutterBuild(),
-    VersionResolver.render(
-      strategy: app.versioning.strategy,
-      syncIosAndroid: app.versioning.syncIosAndroid,
-      platform: 'android',
-    ),
-    _artifactHelper(),
-    'platform :android do',
-    _buildLane(app),
-    _playLane(app),
-    _promoteLane(app),
-    if (app.firebase?.androidAppIdRef != null) _firebaseLane(app),
-    'end',
-  ].join('\n');
+  String _render(ResolvedApp app) {
+    final firebase = app.firebase;
+    return <String>[
+      FastlaneRuby.header('android'),
+      FastlaneRuby.flavorTable(
+        app,
+        (flavor) => <String, String>{
+          'package_name': flavor.androidApplicationId ?? '',
+          if (firebase != null) 'google_services': flavor.firebaseAndroid ?? '',
+        },
+      ),
+      FastlaneRuby.helpers(),
+      FastlaneRuby.flutterBuild(),
+      VersionResolver.render(
+        strategy: app.versioning.strategy,
+        syncIosAndroid: app.versioning.syncIosAndroid,
+        platform: 'android',
+      ),
+      _artifactHelper(),
+      if (firebase != null) ...<String>[
+        _firebaseAppIdHelper(firebase),
+        FastlaneRuby.changelog(
+          source: firebase.changelogFrom,
+          function: 'firebase_release_notes',
+          configKey: 'targets.firebase.changelog_from',
+          question: 'Release notes:',
+        ),
+      ],
+      'platform :android do',
+      _buildLane(app),
+      _playLane(app),
+      _promoteLane(app),
+      // Whenever the target is configured. It used to also need
+      // android_app_id_ref, and without one the lane was silently left out:
+      // a config asked for Firebase and the Fastfile had no way to get there.
+      if (firebase != null) _firebaseLane(firebase),
+      'end',
+    ].join('\n');
+  }
 
   /// Where Flutter writes each Android artifact.
   ///
@@ -251,28 +267,99 @@ $keyPropertiesGuard
 ''';
   }
 
-  String _firebaseLane(ResolvedApp app) {
-    final appIdRef = app.firebase!.androidAppIdRef!;
-    final groups = app.firebase!.groups;
+  /// Which Firebase app a flavor's build goes to.
+  ///
+  /// An explicit `app_id:` always wins: it is how `shipway release` hands over
+  /// the id it already checked and printed, so what the plan showed is what
+  /// is used.
+  String _firebaseAppIdHelper(FirebaseTarget firebase) {
+    final ref = firebase.androidAppIdRef;
+    if (ref != null) {
+      return '''
+# targets.firebase.android_app_id_ref names where the app id is. A configured
+# name is authoritative: falling back to google-services.json when it is unset
+# would upload to an app nobody chose.
+def firebase_app_id(config, options)
+  explicit = options[:app_id].to_s.strip
+  return explicit unless explicit.empty?
+
+  require_env("$ref")
+  ENV.fetch("$ref")
+end
+''';
+    }
+    return r'''
+require 'json'
+
+# The app id comes from the flavor's own google-services.json, matched on
+# package name. One file routinely lists every Android app in the Firebase
+# project, so the first entry is the right answer for only one flavor.
+def firebase_app_id(config, options)
+  explicit = options[:app_id].to_s.strip
+  return explicit unless explicit.empty?
+
+  path = config[:google_services].to_s
+  if path.empty?
+    UI.user_error!("No google-services.json is configured for #{config[:package_name]}. " \
+                   "Set flavors.<flavor>.firebase.android in shipway.yaml, or " \
+                   "targets.firebase.android_app_id_ref.")
+  end
+  file = root_path(path)
+  require_file(file, "Download it from the Firebase console, or correct the path in shipway.yaml.")
+
+  clients = JSON.parse(File.read(file)).fetch("client", [])
+  client = clients.find do |candidate|
+    candidate.dig("client_info", "android_client_info", "package_name") == config[:package_name]
+  end
+  if client.nil?
+    UI.user_error!("#{path} has no Android app for #{config[:package_name]}. " \
+                   "Register it in that Firebase project and download the file again.")
+  end
+  client.dig("client_info", "mobilesdk_app_id")
+end
+''';
+  }
+
+  String _firebaseLane(FirebaseTarget firebase) {
+    final groups = firebase.groups;
+    // Left out when none are configured. The old default named a `testers`
+    // group, which App Distribution rejects in any project that has no group
+    // by that name — after the build.
+    final groupsLine = groups.isEmpty
+        ? ''
+        : '\n      groups: "${groups.join(',')}",';
     return '''
   desc "Build and upload to Firebase App Distribution"
   lane :firebase do |options|
     flavor = require_flavor(options)
-    require_env("$appIdRef", "$firebaseKeyEnv")
+    config = flavor_config(flavor)
+    require_env("$firebaseKeyEnv")
 
-    artifact = build(flavor: flavor, type: options.fetch(:type, "apk"))
+    # Both before the build, so a missing app or notes that cannot be produced
+    # fail in seconds rather than after the slowest part of the job.
+    app_id = firebase_app_id(config, options)
+    notes = firebase_release_notes(options[:changelog])
 
-    next UI.important("dry_run: would upload #{artifact}") if options[:dry_run]
+    type = options.fetch(:type, "apk")
+    artifact = build(
+      flavor: flavor,
+      type: type,
+      version_name: options[:version_name],
+      build_number: options[:build_number]
+    )
+
+    next UI.important("dry_run: would upload #{artifact} to #{app_id}") if options[:dry_run]
 
     firebase_app_distribution(
       # A service-account file, not the deprecated CI token, which App
       # Distribution no longer accepts.
       service_credentials_file: ENV.fetch("$firebaseKeyEnv"),
-      app: ENV.fetch("$appIdRef"),
+      app: app_id,
       android_artifact_path: artifact,
-      android_artifact_type: options.fetch(:type, "apk").upcase,
-      groups: "${groups.isEmpty ? 'testers' : groups.join(',')}",
-      release_notes: "#{flavor} #{last_git_commit[:abbreviated_commit_hash]}"
+      # The plugin spells these AAB and APK. `appbundle` is Flutter's word, and
+      # upcasing it produced a type the plugin rejects.
+      android_artifact_type: type == "appbundle" ? "AAB" : "APK",$groupsLine
+      release_notes: notes || "#{flavor} #{last_git_commit[:abbreviated_commit_hash]}"
     )
   end
 ''';

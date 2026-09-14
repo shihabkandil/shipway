@@ -599,7 +599,12 @@ FirebaseTarget _$FirebaseTargetFromJson(Map json) => $checkedCreate(
   ($checkedConvert) {
     $checkKeys(
       json,
-      allowedKeys: const ['android_app_id_ref', 'ios_app_id_ref', 'groups'],
+      allowedKeys: const [
+        'android_app_id_ref',
+        'ios_app_id_ref',
+        'groups',
+        'changelog_from',
+      ],
     );
     final val = FirebaseTarget(
       androidAppIdRef: $checkedConvert(
@@ -613,12 +618,19 @@ FirebaseTarget _$FirebaseTargetFromJson(Map json) => $checkedCreate(
             (v as List<dynamic>?)?.map((e) => e as String).toList() ??
             const <String>[],
       ),
+      changelogFrom: $checkedConvert(
+        'changelog_from',
+        (v) =>
+            $enumDecodeNullable(_$ChangelogSourceEnumMap, v) ??
+            ChangelogSource.git,
+      ),
     );
     return val;
   },
   fieldKeyMap: const {
     'androidAppIdRef': 'android_app_id_ref',
     'iosAppIdRef': 'ios_app_id_ref',
+    'changelogFrom': 'changelog_from',
   },
 );
 
@@ -627,6 +639,7 @@ Map<String, dynamic> _$FirebaseTargetToJson(FirebaseTarget instance) =>
       'android_app_id_ref': ?instance.androidAppIdRef,
       'ios_app_id_ref': ?instance.iosAppIdRef,
       'groups': instance.groups,
+      'changelog_from': _$ChangelogSourceEnumMap[instance.changelogFrom]!,
     };
 
 VersioningConfig _$VersioningConfigFromJson(Map json) =>

@@ -76,7 +76,11 @@ nothing else will, so it never requires a `shipway.yaml`.
 Check ids: `flutter`, `dart`, `xcode`, `cocoapods`, `ruby`, `bundler`,
 `fastlane`, `xcodeproj_gem`, `pbxproj_object_version`, `jdk`, `gradle_dsl`,
 `gradle_wrapper`, `play_target_sdk`, `firebase`, `flutterfire`, `keychain`,
-`fastlane-shim`, `gemfile-pins`.
+`fastlane-shim`, `gemfile-pins`, `fastlane-lanes`.
+
+`fastlane-lanes` fails when a target in `shipway.yaml` has no lane in its
+platform's Fastfile, and says whether to regenerate the Fastfile or, if it was
+your project's own, to add the lane or adopt the file.
 
 A **warning** means it will work now and bite later — a Ruby near end of
 support, a store deadline approaching. A **failure** blocks shipping.
@@ -577,7 +581,18 @@ bundle exec fastlane ios beta flavor:prod
 |---|---|
 | `build` | Builds a release artifact. `type: "appbundle"` (default) or `"apk"`. |
 | `play` | `build` → `upload_to_play_store`, on the configured track. Takes `dry_run: true`. |
-| `firebase` | `build` → Firebase App Distribution. Only generated when `targets.firebase.android_app_id_ref` is set. |
+| `firebase` | `build` → Firebase App Distribution. Generated whenever `targets.firebase` is set. `type: "appbundle"` uploads an AAB; the default is an APK. Takes `dry_run: true`, `changelog:` and `app_id:`. |
+| `promote` | Moves a build already on Play to another track. Uploads nothing. |
+
+The Firebase lane finds its app in the flavor's `google-services.json`
+(`flavors.<name>.firebase.android`), matched on the flavor's package name — one
+file often lists every app in the Firebase project, so the first entry is not
+the answer. `targets.firebase.android_app_id_ref` overrides that when set, and
+is then authoritative: an unset variable fails rather than quietly falling back
+to the file.
+
+**Firebase App Distribution is Android-only in this version.** There is no iOS
+lane, and `ios_app_id_ref` is accepted but read by nothing yet.
 
 Every lane takes `flavor:`, and refuses with the list of valid flavors without
 it. The Play lane never touches the store listing — metadata belongs to whoever

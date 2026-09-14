@@ -69,7 +69,8 @@ void main() {
       ..write('shipway.yaml', _config())
       ..write('pubspec.yaml', 'name: acme_app\nversion: 2.4.0+31\n')
       ..write('.env', 'PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json\n')
-      ..write('play.json', '{}');
+      ..write('play.json', '{}')
+      ..write('android/fastlane/Fastfile', 'lane :play do\nend\n');
     logger = _CapturingLogger();
     runner = RecordingProcessRunner();
     http = RecordingHttpPoster();

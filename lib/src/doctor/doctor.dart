@@ -163,6 +163,7 @@ class Doctor {
     KeychainCheck(),
     FastlaneShimCheck(),
     GemfileSolvableCheck(),
+    ReleaseLanesCheck(),
   ];
 
   /// Runs every check.

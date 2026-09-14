@@ -226,8 +226,15 @@ ${_androidSigningStep(app)}${_playKeyStep(app)}${_firebaseKeyStep(app)}
 
       - name: Build and upload
         working-directory: android
-        run: bundle exec fastlane android play flavor:\${{ inputs.flavor }}
+        run: bundle exec fastlane android ${_androidLane(app)} flavor:\${{ inputs.flavor }}
 ''';
+
+  /// Play when it is configured, Firebase when only that is.
+  ///
+  /// A job that runs the play lane for a project that ships only to Firebase
+  /// fails at the Play credential it was never going to have.
+  static String _androidLane(ResolvedApp app) =>
+      app.play == null && app.firebase != null ? 'firebase' : 'play';
 
   /// Turns the keystore secret back into the two files Gradle expects.
   ///

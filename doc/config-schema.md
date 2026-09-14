@@ -77,10 +77,11 @@ apps:                         # keyed by app id; a single-app repo uses `main`
         rollout: 0.1                   # user fraction; supply derives the status
         artifact: aab                  # aab | apk
         service_account_ref: PLAY_SERVICE_ACCOUNT_JSON
-      firebase:
-        android_app_id_ref: FB_ANDROID_APP_ID
-        ios_app_id_ref: FB_IOS_APP_ID
-        groups: [testers]
+      firebase:                        # App Distribution; Android only for now
+        groups: [testers]              # none: uploaded, not distributed
+        changelog_from: git            # git | file | prompt — the release notes
+        android_app_id_ref: FB_ANDROID_APP_ID  # optional; see below
+        ios_app_id_ref: FB_IOS_APP_ID  # accepted, read by nothing yet
 
     versioning:
       strategy: increment              # timestamp | increment | remote
@@ -219,6 +220,31 @@ Two cases are handled rather than left to bite:
   a changelog instead of failing.
 - **`prompt` on CI** refuses outright. A prompt on a runner is a hang, which
   burns the job timeout and reports nothing.
+
+## `targets.firebase` — App Distribution
+
+**Android only in this version.** There is no iOS App Distribution lane, and
+`ios_app_id_ref` is accepted but read by nothing.
+
+The lane is generated whenever `targets.firebase` is present. Which Firebase app
+a flavor uploads to is decided in this order:
+
+1. `app_id:` passed to the lane — `shipway release` passes the id it checked
+   and printed, so the plan shows what is used.
+2. The variable `android_app_id_ref` names, when it is set in the config. It is
+   then **required**: an unset variable fails, rather than quietly falling back
+   to a file that may belong to a different app.
+3. The flavor's `google-services.json` (`flavors.<name>.firebase.android`),
+   matched on the flavor's application id. One file often lists every Android
+   app in the Firebase project, so the first entry is never assumed.
+
+`shipway setup firebase` finds the `google-services.json` files and records
+their paths.
+
+`groups` lists tester groups by alias. With none, the build is uploaded but not
+distributed — shipway no longer invents a `testers` group, which App
+Distribution rejects in any project without one. `changelog_from` works as it
+does for TestFlight; with no notes, the flavor and commit are used.
 
 ## `ios.export` — who exports the `.ipa`
 

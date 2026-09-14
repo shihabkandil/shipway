@@ -7,6 +7,9 @@ import 'package:path/path.dart' as p;
 
 import '../../core/config/shipway_config.dart';
 import '../../core/errors/classifier.dart';
+import '../../core/fastlane/fastfile_lanes.dart';
+import '../../core/fastlane/release_target.dart';
+import '../../core/firebase/google_services.dart';
 import '../../generators/generated_file.dart';
 import '../../generators/generator_registry.dart';
 import '../../secrets/secret_requirements.dart';
@@ -14,38 +17,6 @@ import '../../secrets/secret_resolver.dart';
 import '../exit_codes.dart';
 import '../notifications.dart';
 import '../run_context.dart';
-
-/// Where a build is going.
-enum ReleaseTarget {
-  testflight('testflight', 'ios', 'beta'),
-  appstore('appstore', 'ios', 'release'),
-  play('play', 'android', 'play'),
-  firebase('firebase', 'android', 'firebase');
-
-  const ReleaseTarget(this.id, this.platform, this.lane);
-
-  final String id;
-
-  /// The platform whose Fastfile holds the lane.
-  final String platform;
-
-  /// How the platform is written in a sentence.
-  String get platformLabel => platform == 'ios' ? 'an iOS' : 'an Android';
-
-  /// The generated lane this runs.
-  final String lane;
-
-  static ReleaseTarget? parse(String? value) {
-    for (final target in ReleaseTarget.values) {
-      if (target.id == value) return target;
-    }
-    return null;
-  }
-
-  static List<String> get ids => <String>[
-    for (final target in ReleaseTarget.values) target.id,
-  ];
-}
 
 /// `shipway release ios|android --flavor <f> --target <t>`.
 ///
@@ -175,6 +146,24 @@ class ReleaseCommand extends Command<int> {
       return ShipwayExit.userError;
     }
 
+    // A lane that is not there makes every later answer irrelevant, and
+    // fastlane's own "Could not find lane" arrives only after Ruby, bundler
+    // and every gem have loaded.
+    final missingLane = await FastfileLanes.check(context.projectRoot, target);
+    if (missingLane != null) {
+      logger
+        ..err(missingLane.what)
+        ..info('  ${missingLane.fix}');
+      return ShipwayExit.userError;
+    }
+
+    GoogleServicesApp? firebaseApp;
+    if (target == ReleaseTarget.firebase &&
+        app.firebase?.androidAppIdRef == null) {
+      firebaseApp = _firebaseApp(flavor);
+      if (firebaseApp == null) return ShipwayExit.userError;
+    }
+
     final missing = await _missingSecrets(config, target);
     if (missing.isNotEmpty) {
       logger.err(
@@ -186,7 +175,7 @@ class ReleaseCommand extends Command<int> {
       return ShipwayExit.environmentError;
     }
 
-    _printPlan(app, flavor, target, results);
+    _printPlan(app, flavor, target, results, firebaseApp: firebaseApp);
 
     if (results['dry-run'] as bool) {
       logger
@@ -214,7 +203,12 @@ class ReleaseCommand extends Command<int> {
       ..stepStarted(step);
 
     final started = DateTime.now();
-    final code = await _runLane(target, flavor, results);
+    final code = await _runLane(
+      target,
+      flavor,
+      results,
+      firebaseApp: firebaseApp,
+    );
 
     notifier?.stepFinished(
       step,
@@ -316,6 +310,42 @@ class ReleaseCommand extends Command<int> {
     return problems;
   }
 
+  /// The Firebase app [flavor] uploads to, read from its
+  /// `google-services.json`, or null once the reason has been reported.
+  ///
+  /// Read here as well as in the lane because here is before the build. The
+  /// id is then handed to the lane, so the one printed is the one used.
+  GoogleServicesApp? _firebaseApp(ResolvedFlavor flavor) {
+    final logger = _context.logger;
+    final path = flavor.firebaseAndroid;
+    final packageName = flavor.androidApplicationId;
+    if (path == null || packageName == null) {
+      logger
+        ..err(
+          'shipway cannot tell which Firebase app `${flavor.name}` uploads '
+          'to.',
+        )
+        ..info(
+          '  Set flavors.${flavor.name}.firebase.android to its '
+          'google-services.json — `shipway setup firebase` finds it — or set '
+          'targets.firebase.android_app_id_ref.',
+        );
+      return null;
+    }
+
+    final lookup = GoogleServices.lookup(
+      _context.projectRoot,
+      path,
+      packageName,
+    );
+    final found = lookup.app;
+    if (found != null) return found;
+    logger
+      ..err(lookup.problem!)
+      ..info('  ${lookup.fix}');
+    return null;
+  }
+
   /// The credentials this target needs that are not resolvable.
   Future<List<String>> _missingSecrets(
     ShipwayConfig config,
@@ -353,8 +383,9 @@ class ReleaseCommand extends Command<int> {
     ResolvedApp app,
     ResolvedFlavor flavor,
     ReleaseTarget target,
-    ArgResults results,
-  ) {
+    ArgResults results, {
+    GoogleServicesApp? firebaseApp,
+  }) {
     final logger = _context.logger;
     final identifier = target.platform == 'ios'
         ? flavor.iosBundleId
@@ -384,6 +415,23 @@ class ReleaseCommand extends Command<int> {
       }
     }
 
+    if (target == ReleaseTarget.firebase) {
+      // Which Firebase app, and where that answer came from. Uploading to the
+      // wrong project's app is otherwise invisible until a tester says so.
+      final ref = app.firebase?.androidAppIdRef;
+      logger.info(
+        firebaseApp != null
+            ? '  app id      ${firebaseApp.appId}  '
+                  '${darkGray.wrap('from ${flavor.firebaseAndroid}')}'
+            : '  app id      ${darkGray.wrap('from \$$ref')}',
+      );
+      final groups = app.firebase?.groups ?? const <String>[];
+      logger.info(
+        '  groups      '
+        '${groups.isEmpty ? darkGray.wrap('none — uploaded, not distributed') : groups.join(', ')}',
+      );
+    }
+
     final version = results['version-name'] as String?;
     final build = results['build-number'] as String?;
     logger.info(
@@ -396,8 +444,9 @@ class ReleaseCommand extends Command<int> {
   Future<int> _runLane(
     ReleaseTarget target,
     ResolvedFlavor flavor,
-    ArgResults results,
-  ) async {
+    ArgResults results, {
+    GoogleServicesApp? firebaseApp,
+  }) async {
     final context = _context;
     final logger = context.logger;
 
@@ -414,6 +463,7 @@ class ReleaseCommand extends Command<int> {
         'build_number:${results['build-number']}',
       if (results['version-name'] != null)
         'version_name:${results['version-name']}',
+      if (firebaseApp != null) 'app_id:${firebaseApp.appId}',
     ];
 
     logger

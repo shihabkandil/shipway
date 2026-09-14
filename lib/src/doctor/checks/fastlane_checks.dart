@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../core/fastlane/fastfile_lanes.dart';
+import '../../core/fastlane/release_target.dart';
 import '../../core/toolchain/fastlane_pins.dart';
 import '../check.dart';
 
@@ -157,5 +159,52 @@ class GemfileSolvableCheck extends Check {
       if (left != b[i]) return left < b[i];
     }
     return false;
+  }
+}
+
+/// Whether every destination `shipway.yaml` configures has a lane to run.
+///
+/// A target with no lane is configured on paper only. `shipway release` stops
+/// on it before building, but a lane run by hand or from CI finds out from
+/// fastlane, which names the missing lane and nothing that would add it.
+class ReleaseLanesCheck extends Check {
+  @override
+  String get id => 'fastlane-lanes';
+
+  @override
+  String get title => 'Release lanes';
+
+  @override
+  Future<CheckResult> run(DoctorContext context) async {
+    final config = context.config;
+    final app = config?.appOrNull(null);
+    if (app == null) {
+      return const CheckResult.skip('No shipway.yaml to read targets from.');
+    }
+
+    final targets = <ReleaseTarget>[
+      for (final target in ReleaseTarget.values)
+        if (target.isConfiguredIn(app)) target,
+    ];
+    if (targets.isEmpty) {
+      return const CheckResult.skip('No targets configured.');
+    }
+
+    final missing = <MissingLane>[];
+    for (final target in targets) {
+      final problem = await FastfileLanes.check(context.projectRoot, target);
+      if (problem != null) missing.add(problem);
+    }
+
+    if (missing.isEmpty) {
+      final names = targets.map((t) => t.id).join(', ');
+      return CheckResult.ok(
+        targets.length == 1 ? '$names has a lane.' : '$names each have a lane.',
+      );
+    }
+    return CheckResult.fail(
+      missing.map((m) => m.what).join(' '),
+      fixHint: <String>{for (final m in missing) m.fix}.join(' '),
+    );
   }
 }

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Fixes from the first field report of an app shipping to Firebase App
+Distribution.
+
+- The `firebase` lane is generated whenever `targets.firebase` is set. It used
+  to be left out, silently, unless `android_app_id_ref` was set too.
+- The Firebase app id is read from the flavor's `google-services.json`, matched
+  on package name, so most projects need no app id variable.
+  `android_app_id_ref` still overrides it.
+- `targets.firebase.changelog_from` chooses the release notes, as it does for
+  TestFlight. With no `groups`, a build is uploaded without being distributed,
+  instead of being sent to a `testers` group that may not exist.
+- `shipway release` stops before building when the target's lane is missing,
+  and says whether to regenerate the Fastfile or adopt it. `shipway doctor`
+  checks the same thing (`fastlane-lanes`).
+- Fixed: `changelog_from: prompt` generated a Fastfile that Ruby could not
+  parse.
+- Fixed: uploading an app bundle to Firebase passed an artifact type the plugin
+  rejects.
+
 ## 0.1.0-beta.1
 
 First public beta.

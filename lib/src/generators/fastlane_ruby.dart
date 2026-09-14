@@ -1,3 +1,4 @@
+import '../core/config/shipway_config.dart';
 import 'generated_file.dart';
 
 /// The Ruby both generated Fastfiles share.
@@ -108,6 +109,99 @@ def flutter_build(type:, flavor:, entrypoint:, version: nil, build: nil, extra: 
   ]
 
   sh("cd #{project_root.shellescape} && #{args.join(' ')}")
+end
+''';
+
+  /// Where `changelog_from: file` reads from, at the project root.
+  ///
+  /// A convention rather than a config field: one more path to configure buys
+  /// nothing over a name everybody can guess.
+  static const String changelogFileName = 'CHANGELOG_NEXT.md';
+
+  /// A Ruby method returning release notes from wherever `changelog_from`
+  /// says, or nil.
+  ///
+  /// Shared by TestFlight and Firebase so the two cannot disagree about what
+  /// `git` means. [function] names the method, [configKey] is the field it
+  /// came from — written into the output so a reader can find it — and
+  /// [question] is what `prompt` asks.
+  static String changelog({
+    required ChangelogSource source,
+    required String function,
+    required String configKey,
+    required String question,
+  }) => switch (source) {
+    ChangelogSource.git => _changelogFromGit(function, configKey),
+    ChangelogSource.file => _changelogFromFile(function, configKey),
+    ChangelogSource.prompt => _changelogFromPrompt(
+      function,
+      configKey,
+      question,
+    ),
+  };
+
+  static String _changelogFromGit(String function, String configKey) =>
+      '''
+# $configKey: git
+def $function(override = nil)
+  return override unless override.to_s.strip.empty?
+
+  # A repository with no tag yet has no "since last release" to describe, and
+  # the action raises rather than returning nothing. The first release having
+  # no changelog is the right answer, not a failed upload.
+  notes = begin
+    changelog_from_git_commits(
+      merge_commit_filtering: "exclude_merges",
+      pretty: "- %s"
+    )
+  rescue StandardError => e
+    UI.important("No changelog from git (#{e.message}). Uploading without one.")
+    nil
+  end
+
+  notes.to_s.strip.empty? ? nil : notes
+end
+''';
+
+  static String _changelogFromFile(String function, String configKey) =>
+      '''
+# $configKey: file
+def $function(override = nil)
+  return override unless override.to_s.strip.empty?
+
+  path = root_path("$changelogFileName")
+  unless File.exist?(path)
+    UI.important("No $changelogFileName to read. Uploading without a changelog.")
+    return nil
+  end
+
+  notes = File.read(path).strip
+  notes.empty? ? nil : notes
+end
+''';
+
+  /// Written with single backslashes in the Ruby. An earlier raw-string
+  /// version emitted `\\` at the end of a line, which is a Ruby syntax error,
+  /// so a config choosing `prompt` produced a Fastfile that could not load.
+  static String _changelogFromPrompt(
+    String function,
+    String configKey,
+    String question,
+  ) =>
+      '''
+# $configKey: prompt
+def $function(override = nil)
+  return override unless override.to_s.strip.empty?
+
+  # A prompt on a runner is a hang, which burns the job timeout and reports
+  # nothing. Saying so is strictly better.
+  if is_ci
+    UI.user_error!("changelog_from: prompt cannot run unattended. Pass " \\
+                   "changelog:\\"...\\" to the lane, or use changelog_from: git.")
+  end
+
+  notes = UI.input("$question")
+  notes.to_s.strip.empty? ? nil : notes
 end
 ''';
 }

@@ -60,6 +60,13 @@ apps:
         track: internal
 ''';
 
+/// A Fastfile declaring [lanes], which is all the pre-flight reads.
+String _fastfile(String platform, String first, String second) =>
+    'platform :$platform do\n'
+    '  lane :$first do\n  end\n'
+    '  lane :$second do\n  end\n'
+    'end\n';
+
 void main() {
   late FixtureProject project;
   late _CapturingLogger logger;
@@ -68,7 +75,15 @@ void main() {
   setUp(() async {
     project = await FixtureProject.create();
     addTearDown(project.dispose);
-    project.write('shipway.yaml', _config);
+    // Lanes for every target, so each test reaches what it is about. What
+    // happens without one is a group of its own.
+    project
+      ..write('shipway.yaml', _config)
+      ..write('ios/fastlane/Fastfile', _fastfile('ios', 'beta', 'release'))
+      ..write(
+        'android/fastlane/Fastfile',
+        _fastfile('android', 'play', 'firebase'),
+      );
     logger = _CapturingLogger();
     runner = RecordingProcessRunner();
   });

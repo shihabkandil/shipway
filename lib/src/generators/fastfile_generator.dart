@@ -32,10 +32,7 @@ class IosFastfileGenerator extends Generator {
   static const String ipaDirectory = 'build/ios/ipa';
 
   /// Where `changelog_from: file` looks, relative to the project root.
-  ///
-  /// A convention rather than a config field: one more path to configure buys
-  /// nothing over a name everybody can guess.
-  static const String changelogFileName = 'CHANGELOG_NEXT.md';
+  static const String changelogFileName = FastlaneRuby.changelogFileName;
 
   @override
   List<GeneratedFile> render(ResolvedApp app) {
@@ -284,70 +281,12 @@ $auth
   /// This field has been in the schema since the beginning and nothing read it:
   /// a config could ask for a changelog and get none, silently. That is worse
   /// than not offering the option.
-  String _changelogHelper(ResolvedApp app) {
-    final source = app.testflight?.changelogFrom ?? ChangelogSource.git;
-    return switch (source) {
-      ChangelogSource.git => _changelogFromGit(),
-      ChangelogSource.file => _changelogFromFile(),
-      ChangelogSource.prompt => _changelogFromPrompt(),
-    };
-  }
-
-  String _changelogFromGit() => r'''
-# targets.testflight.changelog_from: git
-def what_to_test(override = nil)
-  return override unless override.to_s.strip.empty?
-
-  # A repository with no tag yet has no "since last release" to describe, and
-  # the action raises rather than returning nothing. The first release having
-  # no changelog is the right answer, not a failed upload.
-  notes = begin
-    changelog_from_git_commits(
-      merge_commit_filtering: "exclude_merges",
-      pretty: "- %s"
-    )
-  rescue StandardError => e
-    UI.important("No changelog from git (#{e.message}). Uploading without one.")
-    nil
-  end
-
-  notes.to_s.strip.empty? ? nil : notes
-end
-''';
-
-  String _changelogFromFile() =>
-      '''
-# targets.testflight.changelog_from: file
-def what_to_test(override = nil)
-  return override unless override.to_s.strip.empty?
-
-  path = root_path("$changelogFileName")
-  unless File.exist?(path)
-    UI.important("No $changelogFileName to read. Uploading without a changelog.")
-    return nil
-  end
-
-  notes = File.read(path).strip
-  notes.empty? ? nil : notes
-end
-''';
-
-  String _changelogFromPrompt() => r'''
-# targets.testflight.changelog_from: prompt
-def what_to_test(override = nil)
-  return override unless override.to_s.strip.empty?
-
-  # A prompt on a runner is a hang, which burns the job timeout and reports
-  # nothing. Saying so is strictly better.
-  if is_ci
-    UI.user_error!("changelog_from: prompt cannot run unattended. Pass " \\
-                   "changelog:\"...\" to the lane, or use changelog_from: git.")
-  end
-
-  notes = UI.input("What to test:")
-  notes.to_s.strip.empty? ? nil : notes
-end
-''';
+  String _changelogHelper(ResolvedApp app) => FastlaneRuby.changelog(
+    source: app.testflight?.changelogFrom ?? ChangelogSource.git,
+    function: 'what_to_test',
+    configKey: 'targets.testflight.changelog_from',
+    question: 'What to test:',
+  );
 
   /// External distribution, only when the config asks for it.
   ///

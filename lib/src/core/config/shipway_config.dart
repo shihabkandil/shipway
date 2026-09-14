@@ -474,24 +474,39 @@ class PlayTarget {
   Map<String, dynamic> toJson() => _$PlayTargetToJson(this);
 }
 
+/// Firebase App Distribution. Android only in this version.
 @JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
 class FirebaseTarget {
   const FirebaseTarget({
     this.androidAppIdRef,
     this.iosAppIdRef,
     this.groups = const <String>[],
+    this.changelogFrom = ChangelogSource.git,
   });
 
   factory FirebaseTarget.fromJson(Map<dynamic, dynamic> json) =>
       _$FirebaseTargetFromJson(json);
 
+  /// Names a variable holding the Android app id. Optional.
+  ///
+  /// Most projects need no variable at all: the id is in the
+  /// `google-services.json` that `flavors.<name>.firebase.android` points at.
+  /// When this is set it is authoritative, because falling back to the file
+  /// when the variable is unset would upload to an app nobody chose.
   @JsonKey(name: 'android_app_id_ref')
   final String? androidAppIdRef;
 
+  /// Read by nothing yet: there is no iOS App Distribution lane.
   @JsonKey(name: 'ios_app_id_ref')
   final String? iosAppIdRef;
 
+  /// Tester groups to distribute to. Empty uploads the build without
+  /// distributing it, rather than naming a group that may not exist.
   final List<String> groups;
+
+  /// Where the release notes come from, exactly as for TestFlight.
+  @JsonKey(name: 'changelog_from')
+  final ChangelogSource changelogFrom;
 
   Map<String, dynamic> toJson() => _$FirebaseTargetToJson(this);
 }

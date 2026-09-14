@@ -437,6 +437,66 @@ apps:
     });
   });
 
+  group('release lanes', () {
+    const config = '''
+version: 1
+project:
+  name: demo
+apps:
+  main:
+    android:
+      application_id: com.acme.app
+    flavors:
+      dev:
+        suffix: .dev
+    targets:
+      play:
+        track: internal
+      firebase:
+        groups: [qa]
+''';
+
+    Future<CheckResult> checkWith(String? fastfile) async {
+      final project = await makeProject();
+      addTearDown(() => project.delete(recursive: true));
+      if (fastfile != null) {
+        File('${project.path}/android/fastlane/Fastfile')
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync(fastfile);
+      }
+      return ReleaseLanesCheck().run(
+        contextFor(RecordingProcessRunner(), project, configYaml: config),
+      );
+    }
+
+    test('skip without a config to read targets from', () async {
+      final project = await makeProject();
+      addTearDown(() => project.delete(recursive: true));
+      final result = await ReleaseLanesCheck().run(
+        contextFor(RecordingProcessRunner(), project),
+      );
+      expect(result.status, CheckStatus.skip);
+    });
+
+    test('a configured target with no lane fails, saying what to do', () async {
+      // The report's first problem: targets.firebase was set and the Fastfile
+      // had no way to get there, found only when a release ran.
+      final result = await checkWith('lane :play do\nend\n');
+
+      expect(result.status, CheckStatus.fail);
+      expect(result.detail, contains('`firebase` lane'));
+      expect(result.fixHint, contains('shipway adopt'));
+    });
+
+    test('every target with a lane passes', () async {
+      final result = await checkWith(
+        'lane :play do\nend\nlane :firebase do\nend\n',
+      );
+      expect(result.status, CheckStatus.ok);
+      expect(result.detail, contains('play, firebase'));
+    });
+  });
+
   group('report', () {
     test('a crashing check degrades to a warning, not a lost report', () async {
       final report = await Doctor(
