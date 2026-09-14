@@ -12,6 +12,7 @@ import '../../core/fastlane/release_target.dart';
 import '../../core/firebase/google_services.dart';
 import '../../core/firebase/service_account.dart';
 import '../../core/toolchain/bundled_fastlane.dart';
+import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../core/toolchain/fastlane_pins.dart';
 import '../../generators/generated_file.dart';
 import '../../generators/generator_registry.dart';
@@ -65,6 +66,13 @@ class ReleaseCommand extends Command<int> {
         'dry-run',
         negatable: false,
         help: 'Validate and print the plan, upload nothing.',
+      )
+      ..addFlag(
+        'analyze',
+        defaultsTo: true,
+        help:
+            "Analyse the flavor's entrypoint before building, so a compile "
+            'error fails in seconds.',
       )
       ..addFlag(
         'access-check',
@@ -186,6 +194,31 @@ class ReleaseCommand extends Command<int> {
       );
       logger.info('  shipway secrets list   — where each one is looked for');
       return ShipwayExit.environmentError;
+    }
+
+    // The Dart half of a release build compiles minutes in, behind Gradle or
+    // Xcode. One file's analysis says in seconds whether it will.
+    if (results['analyze'] as bool) {
+      final analysis = await EntrypointAnalysis.run(
+        context.runner,
+        root: context.projectRoot,
+        entrypoint: flavor.entrypoint,
+      );
+      if (analysis.failed) {
+        logger.err(
+          '${flavor.entrypoint} does not compile, so the release build would '
+          'fail partway through:',
+        );
+        for (final error in analysis.errors) {
+          logger.info('  $error');
+        }
+        logger.info('  Fix it, or pass --no-analyze to build anyway.');
+        return ShipwayExit.userError;
+      }
+      final skipped = analysis.skipped;
+      if (skipped != null) {
+        logger.detail('Did not analyse ${flavor.entrypoint}: $skipped');
+      }
     }
 
     // Asked before the plan and before anything slow. The bundle a lane runs

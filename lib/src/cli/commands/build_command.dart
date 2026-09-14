@@ -4,6 +4,7 @@ import 'package:args/command_runner.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/errors/classifier.dart';
+import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../generators/generator_registry.dart';
 import '../../generators/generated_file.dart';
 import '../exit_codes.dart';
@@ -61,6 +62,13 @@ class BuildCommand extends Command<int> {
         'dry-run',
         negatable: false,
         help: 'Print the command that would run, and stop.',
+      )
+      ..addFlag(
+        'analyze',
+        defaultsTo: true,
+        help:
+            "Analyse the flavor's entrypoint first, so a compile error fails "
+            'in seconds rather than partway through the build.',
       );
   }
 
@@ -136,6 +144,29 @@ class BuildCommand extends Command<int> {
         ..info('Would run, from ${context.projectRoot}:')
         ..info('  $commandLine');
       return ShipwayExit.success;
+    }
+
+    if (resolved != null && results['analyze'] as bool) {
+      final analysis = await EntrypointAnalysis.run(
+        context.runner,
+        root: context.projectRoot,
+        entrypoint: resolved.entrypoint,
+      );
+      if (analysis.failed) {
+        logger.err(
+          '${resolved.entrypoint} does not compile, so the build would fail '
+          'partway through:',
+        );
+        for (final error in analysis.errors) {
+          logger.info('  $error');
+        }
+        logger.info('  Fix it, or pass --no-analyze to build anyway.');
+        return ShipwayExit.userError;
+      }
+      final skipped = analysis.skipped;
+      if (skipped != null) {
+        logger.detail('Did not analyse ${resolved.entrypoint}: $skipped');
+      }
     }
 
     logger.detail('Running: $commandLine');

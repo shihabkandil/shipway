@@ -37,6 +37,10 @@ class AdoptCommand extends Command<int> {
 
   RunContext get _context => _contextProvider();
 
+  /// Whether any file was refused because generating it would break the
+  /// build. Set while adopting, read for the exit code.
+  bool _refused = false;
+
   @override
   String get name => 'adopt';
 
@@ -52,6 +56,7 @@ class AdoptCommand extends Command<int> {
     final context = _context;
     final logger = context.logger;
     final dryRun = argResults!['dry-run'] as bool;
+    _refused = false;
 
     if (argResults!.rest.isEmpty) {
       logger.err(
@@ -125,7 +130,8 @@ class AdoptCommand extends Command<int> {
                     '${adopted == 1 ? 'it' : 'them'}. Run `shipway generate`.',
         );
     }
-    return ShipwayExit.success;
+    // A refusal is a decision somebody has to make, like a conflict.
+    return _refused ? ShipwayExit.userError : ShipwayExit.success;
   }
 
   /// Shows how the config and the project disagree, before any file changes.
@@ -209,6 +215,16 @@ class AdoptCommand extends Command<int> {
 
     logger.info('');
     logger.info(cyan.wrap(file.path) ?? file.path);
+
+    // Handing over a file that `generate` would then break is not a favour.
+    if (planned.outcome == WriteOutcome.conflictContent) {
+      _refused = true;
+      logger
+        ..err('  ${planned.reason}')
+        ..info('  ${planned.remedy}')
+        ..info('  Not adopted.');
+      return false;
+    }
 
     if (planned.outcome == WriteOutcome.unchanged) {
       logger.info('  Already matches what shipway would write.');

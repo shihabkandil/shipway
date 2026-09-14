@@ -1,5 +1,6 @@
 import '../core/model/android_model.dart';
 import 'generated_file.dart';
+import 'gradle_flavor_reconciler.dart';
 
 /// Writes the `flavorDimensions` and `productFlavors` block into the app's
 /// Gradle build file.
@@ -68,6 +69,14 @@ class AndroidFlavorGenerator extends Generator {
         // Inside `android { }`, because that is the only place these blocks are
         // legal.
         anchor: const BlockAnchor(insideBlock: 'android'),
+        // The block creates each flavor, so the project's own declarations
+        // of the same flavors are rewritten to configure them instead.
+        reconciler: GradleFlavorReconciler(
+          path: 'android/app/${app.gradleDsl.buildFileName}',
+          flavors: <String>[for (final flavor in app.flavors) flavor.name],
+          dimensions: dimensions,
+          kotlin: kotlin,
+        ),
         description:
             '${app.flavors.length} product '
             'flavor${app.flavors.length == 1 ? '' : 's'}',

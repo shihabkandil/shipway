@@ -8,6 +8,7 @@ import '../core/managed/managed_block.dart';
 import '../core/managed/text_diff.dart';
 import '../core/gradle/gradle_scanner.dart';
 import 'generated_file.dart';
+import 'write_guards.dart';
 
 /// What writing one file would do, or did.
 enum WriteOutcome {
@@ -26,12 +27,17 @@ enum WriteOutcome {
   /// shipway owns it, but the user edited the part shipway owns.
   conflictEdited,
 
+  /// Writing it would leave the project unable to build — a flavor declared
+  /// twice, a function the generated code calls that nothing defines.
+  conflictContent,
+
   /// The file could not be written for a reason shipway cannot resolve.
   failed;
 
   bool get isConflict =>
       this == WriteOutcome.conflictUnmanaged ||
-      this == WriteOutcome.conflictEdited;
+      this == WriteOutcome.conflictEdited ||
+      this == WriteOutcome.conflictContent;
 
   bool get changesFile =>
       this == WriteOutcome.create || this == WriteOutcome.update;
@@ -90,6 +96,18 @@ class GeneratedFileWriter {
     final target = File(p.join(root, file.path));
     final ownership = lock.ownershipOf(file.path);
 
+    // Before anything else: a file that would not compile is not worth
+    // planning, whoever owns it.
+    final guarded = file.createOnly ? null : file.guard?.check(root);
+    if (guarded != null) {
+      return WriteResult(
+        file: file,
+        outcome: WriteOutcome.conflictContent,
+        reason: guarded.reason,
+        remedy: guarded.remedy,
+      );
+    }
+
     if (!target.existsSync()) {
       if (file.mode == WriteMode.block && file.anchor != null) {
         // A block belongs inside a structure that does not exist yet, so there
@@ -131,6 +149,16 @@ class GeneratedFileWriter {
         remedy:
             'Run `shipway adopt ${file.path}` to review the difference and '
             'hand it over.',
+      );
+    }
+
+    final blockers = _reconcile(file, current).blockers;
+    if (blockers.isNotEmpty) {
+      return WriteResult(
+        file: file,
+        outcome: WriteOutcome.conflictContent,
+        reason: blockers.map((b) => b.reason).join('\n'),
+        remedy: blockers.first.remedy,
       );
     }
 
@@ -200,11 +228,12 @@ class GeneratedFileWriter {
       return _ensureTrailingNewline(file.contents);
     }
 
+    final base = _reconcile(file, current).text;
     final anchor = file.anchor;
     int? insertAt;
     var indent = '';
-    if (anchor != null && !ManagedBlock.isPresent(current)) {
-      final located = _locateAnchor(current, anchor);
+    if (anchor != null && !ManagedBlock.isPresent(base)) {
+      final located = _locateAnchor(base, anchor);
       if (located == null) {
         // Fall through to appending; plan() has already reported the failure
         // for the case where this matters.
@@ -216,11 +245,42 @@ class GeneratedFileWriter {
     }
 
     return ManagedBlock.upsert(
-      current,
+      base,
       body: file.contents,
       style: file.commentStyle,
       insertAt: insertAt,
       indent: indent,
+    );
+  }
+
+  /// One line of the mask that stands in for shipway's block while a
+  /// reconciler reads the rest of the file.
+  static const String _maskLine = '//~shipway-managed-block~\n';
+
+  /// [current] as [file]'s reconciler would leave it, block untouched.
+  ///
+  /// The block is swapped for comment lines — as many as it has, so line
+  /// numbers in a reconciler's messages still match the file — and put back
+  /// afterwards. The reconciler therefore never sees, and cannot rewrite,
+  /// what shipway itself wrote.
+  ReconcileResult _reconcile(GeneratedFile file, String current) {
+    final reconciler = file.reconciler;
+    if (reconciler == null) return ReconcileResult(current);
+
+    final block = ManagedBlock.find(current);
+    if (block == null) return reconciler.reconcile(current);
+
+    final region = current.substring(block.start, block.end);
+    final lines = '\n'.allMatches(region).length;
+    final mask = _maskLine * (lines < 1 ? 1 : lines);
+    final result = reconciler.reconcile(
+      current.replaceRange(block.start, block.end, mask),
+    );
+    final at = result.text.indexOf(mask);
+    if (at == -1) return ReconcileResult(current, blockers: result.blockers);
+    return ReconcileResult(
+      result.text.replaceRange(at, at + mask.length, region),
+      blockers: result.blockers,
     );
   }
 

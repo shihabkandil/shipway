@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'generated_file.dart';
+import 'write_guards.dart';
 
 /// Writes `lib/main_<flavor>.dart` for each flavor.
 ///
@@ -46,9 +47,28 @@ class DartEntrypointGenerator extends Generator {
           path: flavor.entrypoint,
           contents: _entrypoint(flavor),
           description: 'entrypoint for ${flavor.name}',
+          // main_common.dart is the project's own once it exists, and a
+          // project that already had one may define no `bootstrap`.
+          guard: DartFunctionGuard(
+            path: commonPath,
+            caller: flavor.entrypoint,
+            name: 'bootstrap',
+            parameter: 'flavor',
+            signature: 'bootstrap({required String flavor})',
+            example: bootstrapExample,
+          ),
         ),
     ];
   }
+
+  /// What to add to a `main_common.dart` the project already had.
+  static const String bootstrapExample = '''
+  Future<void> bootstrap({required String flavor}) async {
+    WidgetsFlutterBinding.ensureInitialized();
+    // Choose this flavor's configuration, then start the app the way
+    // main.dart does.
+    runApp(const MyApp());
+  }''';
 
   /// A bootstrap that compiles and runs, and is obviously a placeholder.
   String _common() => '''

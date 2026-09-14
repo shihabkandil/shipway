@@ -3,6 +3,7 @@ import '../core/managed/comment_style.dart';
 import '../core/model/android_model.dart';
 import '../core/managed/lock_file.dart';
 import '../core/secrets/secret_names.dart';
+import 'write_guards.dart';
 
 /// Where to put a managed block in a file shipway does not own outright.
 ///
@@ -29,6 +30,8 @@ class GeneratedFile {
     this.anchor,
     this.description,
     this.createOnly = false,
+    this.reconciler,
+    this.guard,
   }) : _commentStyle = commentStyle;
 
   /// Fully-managed file: shipway owns the whole thing.
@@ -36,11 +39,13 @@ class GeneratedFile {
     required String path,
     required String contents,
     String? description,
+    WriteGuard? guard,
   }) : this(
          path: path,
          contents: contents,
          mode: WriteMode.full,
          description: description,
+         guard: guard,
        );
 
   /// Written once if missing, then never touched again.
@@ -68,6 +73,7 @@ class GeneratedFile {
     BlockAnchor? anchor,
     CommentStyle? commentStyle,
     String? description,
+    ContentReconciler? reconciler,
   }) : this(
          path: path,
          contents: contents,
@@ -75,6 +81,7 @@ class GeneratedFile {
          anchor: anchor,
          commentStyle: commentStyle,
          description: description,
+         reconciler: reconciler,
        );
 
   /// Path relative to the project root, always POSIX-separated.
@@ -100,6 +107,14 @@ class GeneratedFile {
 
   /// Create if absent, then leave alone forever.
   final bool createOnly;
+
+  /// Block files only: rewrites what the file already declares, so the block
+  /// takes over from it instead of repeating it.
+  final ContentReconciler? reconciler;
+
+  /// A condition elsewhere in the project that must hold for this file to
+  /// compile. Checked before anything is written.
+  final WriteGuard? guard;
 }
 
 /// Turns configuration into files.

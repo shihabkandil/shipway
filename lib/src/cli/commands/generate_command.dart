@@ -454,6 +454,7 @@ class GenerateCommand extends Command<int> {
         WriteOutcome.unchanged => darkGray.wrap('    skip') ?? 'skip',
         WriteOutcome.conflictUnmanaged => yellow.wrap('conflict') ?? 'conflict',
         WriteOutcome.conflictEdited => yellow.wrap('  edited') ?? 'edited',
+        WriteOutcome.conflictContent => yellow.wrap('conflict') ?? 'conflict',
         WriteOutcome.failed => red.wrap('  failed') ?? 'failed',
       };
 }

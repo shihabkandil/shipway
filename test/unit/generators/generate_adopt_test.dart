@@ -534,4 +534,145 @@ $flavors
       );
     });
   });
+
+  group('a project that already declares its flavors', () {
+    const gradlePath = 'android/app/build.gradle.kts';
+
+    setUp(() async {
+      await makeAgreeingProject();
+      // The field report's shape: flavors the project creates itself, with a
+      // value of its own that shipway does not manage.
+      project.withGradle('''
+android {
+    defaultConfig {
+        applicationId = "com.acme.app"
+    }
+    flavorDimensions += "environment"
+
+    productFlavors {
+        create("dev") {
+            dimension = "environment"
+            applicationIdSuffix = ".dev"
+            resValue("string", "app_name", "Acme Dev")
+            manifestPlaceholders["deepLinkHost"] = "dev.acme.app"
+        }
+
+        create("prod") {
+            dimension = "environment"
+            resValue("string", "app_name", "Acme")
+        }
+    }
+}
+''');
+    });
+
+    test(
+      'generate creates each flavor once and keeps what is the project\'s',
+      () async {
+        await run(<String>['import']);
+        await run(<String>['adopt', 'all']);
+        logger.clear();
+
+        expect(
+          await run(<String>['generate']),
+          ShipwayExit.success,
+          reason: logger.output,
+        );
+
+        final gradle = project.read(gradlePath);
+        // Before this, the block's create("dev") sat beside the project's own,
+        // and Gradle refused the second.
+        expect(RegExp(r'create\("dev"\)').allMatches(gradle), hasLength(1));
+        expect(RegExp(r'create\("prod"\)').allMatches(gradle), hasLength(1));
+        expect(RegExp('flavorDimensions').allMatches(gradle), hasLength(1));
+        expect(gradle, contains('getByName("dev")'));
+        expect(
+          gradle,
+          contains('manifestPlaceholders["deepLinkHost"] = "dev.acme.app"'),
+        );
+        // The block comes first, so getByName finds the flavor it created.
+        expect(
+          gradle.indexOf('create("dev")'),
+          lessThan(gradle.indexOf('getByName("dev")')),
+        );
+      },
+    );
+
+    test('adopt shows the rewrite before anything is written', () async {
+      await run(<String>['import']);
+      final before = project.read(gradlePath);
+      logger.clear();
+
+      await run(<String>['adopt', gradlePath, '--dry-run']);
+
+      expect(logger.output, contains('getByName("dev")'));
+      expect(project.read(gradlePath), before);
+    });
+
+    test('what cannot be rewritten stops adopt, naming the line', () async {
+      project.withGradle('''
+android {
+    defaultConfig {
+        applicationId = "com.acme.app"
+    }
+    flavorDimensions += "environment"
+    productFlavors.create("dev") {
+        dimension = "environment"
+    }
+}
+''');
+      await run(<String>['import']);
+      final before = project.read(gradlePath);
+      logger.clear();
+
+      final exit = await run(<String>['adopt', 'all']);
+
+      expect(exit, ShipwayExit.userError);
+      expect(logger.output, contains('$gradlePath:6'));
+      expect(logger.output, contains('getByName'));
+      expect(logger.output, contains('Not adopted.'));
+      expect(project.read(gradlePath), before);
+    });
+  });
+
+  group('entrypoints that call into an existing main_common.dart', () {
+    setUp(makeAgreeingProject);
+
+    test('are not written while it has no bootstrap', () async {
+      project.write(
+        'lib/main_common.dart',
+        'Future<void> mainCommon() async {}\n',
+      );
+      await run(<String>['import']);
+      await run(<String>['adopt', 'all']);
+      logger.clear();
+
+      final exit = await run(<String>['generate', 'entrypoints']);
+
+      expect(exit, ShipwayExit.userError);
+      expect(logger.output, contains('bootstrap({required String flavor})'));
+      expect(logger.output, contains('lib/main_common.dart'));
+      expect(project.read('lib/main_dev.dart'), 'void main() {}\n');
+    });
+
+    test('are written once it has one', () async {
+      project.write(
+        'lib/main_common.dart',
+        'Future<void> bootstrap({required String flavor}) async {}\n',
+      );
+      await run(<String>['import']);
+      await run(<String>['adopt', 'all']);
+      logger.clear();
+
+      expect(
+        await run(<String>['generate', 'entrypoints']),
+        ShipwayExit.success,
+        reason: logger.output,
+      );
+      expect(
+        project.read('lib/main_dev.dart'),
+        contains("common.bootstrap(flavor: 'dev')"),
+      );
+    });
+  });
 }

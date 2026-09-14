@@ -41,6 +41,15 @@ Distribution.
   when they belong to different projects, and checks with App Distribution
   that the account may upload before building. A 403 names the account, the
   project and the role to grant. `--no-access-check` skips it.
+- Fixed: adopting a Gradle file whose flavors the project already created made
+  Gradle fail on a flavor created twice. When shipway writes its block it now
+  rewrites the project's own declarations to `getByName`, removing only the
+  properties the block sets; `adopt` shows the rewrite first. What it cannot
+  rewrite stops `adopt` and `generate`, naming the line.
+- `adopt` and `generate` refuse to write entrypoints calling a `bootstrap` that
+  an existing `lib/main_common.dart` does not define, and print one to add.
+- `shipway build` and `shipway release` analyse the flavor's entrypoint before
+  building, so a compile error fails in seconds. `--no-analyze` skips it.
 
 ## 0.1.0-beta.1
 

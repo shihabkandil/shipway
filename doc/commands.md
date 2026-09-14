@@ -244,6 +244,30 @@ permissions.
 |---|---|
 | `--dry-run` | Show what adopting would change without recording anything. |
 
+**Flavors the project already declares.** shipway's managed block *creates*
+each flavor, so a project that creates them too declares each one twice, and
+Gradle fails because the flavor already exists. When shipway writes the block it
+rewrites the project's own declarations to *configure* those flavors instead:
+`create("dev")` becomes `getByName("dev")`; the properties the block sets —
+`dimension`, `applicationIdSuffix`, `versionNameSuffix`, the `app_name` resource
+— are removed; a declaration left empty is removed, and so is a
+`flavorDimensions` line naming only shipway's dimensions. What is yours —
+`manifestPlaceholders`, `buildConfigField`, signing — stays. The block goes first
+inside `android { }`, so `getByName` finds the flavor it created, and `adopt`
+shows all of this in its diff before asking.
+
+In your own section, then, *configure* flavors with `getByName("<flavor>")`;
+never `create` one shipway manages. A declaration shipway cannot rewrite with
+confidence — flavors created in a loop, or `productFlavors.create(...)` outside a
+`productFlavors { }` block — stops `adopt` and `generate`, naming the line.
+
+**Entrypoints that would not compile.** Each generated `lib/main_<flavor>.dart`
+calls `bootstrap({required String flavor})` in `lib/main_common.dart`. shipway
+creates that file when it is missing. When the project already has one with no
+`bootstrap`, `adopt` and `generate` refuse the entrypoints and print a
+declaration to add, rather than writing code that fails in the middle of a
+build.
+
 ### `ios-signing`
 
 Adopts a certificates repository rather than initialising one. It clones the
@@ -322,6 +346,12 @@ that **do not fail**:
 Neither produces an error, so shipway assembles the command rather than leaving
 it to memory.
 
+**The entrypoint is analysed first.** A release build compiles Dart minutes in,
+behind Gradle or Xcode. `dart analyze` on the flavor's entrypoint takes seconds,
+so `build` and `release` run it first and stop on an error — warnings never
+stop anything. It is skipped when packages are not resolved yet, since then
+every import looks broken. `--no-analyze` skips it.
+
 | Option | Meaning |
 |---|---|
 | `-f, --flavor <name>` | Which flavor. Required when the config declares any. |
@@ -329,6 +359,7 @@ it to memory.
 | `--debug` | Build debug instead of release. |
 | `--no-codesign` | iOS only: archive without signing, which is what the generated fastlane lane uses because gym signs on export. |
 | `--dry-run` | Print the command that would run, and stop. |
+| `--no-analyze` | Skip analysing the flavor's entrypoint before building. |
 
 `shipway build ios` off macOS exits `2` immediately, naming the host and
 pointing at `shipway build android`. `shipway build android` works anywhere
@@ -633,6 +664,7 @@ runs the same generated lane you could run by hand.
 | `--version-name <v>` | Use this instead of `pubspec.yaml`. |
 | `--dry-run` | Validate and print the plan, upload nothing. |
 | `--no-notify` | Post nothing to Slack for this release. |
+| `--no-analyze` | Skip analysing the flavor's entrypoint before building. |
 | `--no-access-check` | Firebase only: skip asking App Distribution whether the service account can reach the app. |
 
 Everything cheap happens first. A target the config never configured, a flag

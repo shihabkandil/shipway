@@ -506,4 +506,51 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
       expect(logger.output, contains('shipway pins ${FastlanePins.fastlane}'));
     });
   });
+
+  group('the entrypoint', () {
+    setUp(() {
+      credentials();
+      project
+        ..write('play.json', '{}')
+        ..write('.dart_tool/package_config.json', '{"configVersion":2}');
+    });
+
+    const release = <String>[
+      'release',
+      'android',
+      '--flavor',
+      'dev',
+      '--target',
+      'play',
+    ];
+
+    test('that does not compile stops the release before the build', () async {
+      runner.stub(
+        'dart analyze',
+        exitCode: 3,
+        stdout:
+            'Analyzing main_dev.dart...\n\n'
+            "  error - lib/main_dev.dart:4:10 - The function 'bootstrap' "
+            "isn't defined. - undefined_function\n\n1 issue found.",
+      );
+
+      final code = await run(release);
+
+      expect(code, ShipwayExit.userError);
+      expect(logger.output, contains("The function 'bootstrap' isn't defined"));
+      expect(logger.output, contains('--no-analyze'));
+      // Nothing slow was started.
+      expect(runner.ran('RUBY_VERSION'), isFalse);
+      expect(runner.ran(BundledFastlane.loader), isFalse);
+    });
+
+    test('--no-analyze goes ahead without asking', () async {
+      runner.stub('dart analyze', exitCode: 3, stdout: '  error - broken');
+
+      final code = await run(<String>[...release, '--dry-run', '--no-analyze']);
+
+      expect(code, ShipwayExit.success, reason: logger.output);
+      expect(runner.ran('dart analyze'), isFalse);
+    });
+  });
 }
