@@ -1,6 +1,6 @@
 name: shipway
 description: Local-first CI/CD for Flutter. Sets up flavors, generates fastlane lanes, and ships to TestFlight, the App Store, Google Play and Firebase from your own machine.
-version: 0.1.0-beta.1
+version: 0.1.0-beta.2
 repository: https://github.com/shihabkandil/shipway
 issue_tracker: https://github.com/shihabkandil/shipway/issues
 topics:

@@ -37,10 +37,7 @@ void main() {
     expect(app.targets.appstore, isNotNull);
     expect(app.targets.play, isNotNull);
     expect(app.targets.firebase, isNotNull);
-    expect(
-      secretRefsOf(config).where((ref) => ref.value != null),
-      isNotEmpty,
-    );
+    expect(secretRefsOf(config).where((ref) => ref.value != null), isNotEmpty);
   });
 
   final app = ResolveApp.resolve(config, gradleDsl: GradleDsl.kotlin);

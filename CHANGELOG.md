@@ -1,10 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-beta.2
 
 Fixes from the first field report of an app shipping to Firebase App
-Distribution.
+Distribution, and a guide to a first release.
 
+- New in the README: a step-by-step guide from install to a first upload on
+  Firebase App Distribution, Google Play or TestFlight, for apps with or
+  without flavors.
+- New `example/`: a `shipway.yaml` using every target and kind of `*_ref`,
+  with the fastlane lanes shipway generates from it. A test keeps them in step
+  with the generators.
 - The `firebase` lane is generated whenever `targets.firebase` is set. It used
   to be left out, silently, unless `android_app_id_ref` was set too.
 - The Firebase app id is read from the flavor's `google-services.json`, matched

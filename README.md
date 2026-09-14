@@ -28,7 +28,7 @@ dart pub global activate shipway
 Or straight from GitHub:
 
 ```sh
-dart pub global activate --source git https://github.com/shihabkandil/shipway --git-ref v0.1.0-beta.1
+dart pub global activate --source git https://github.com/shihabkandil/shipway --git-ref v0.1.0-beta.2
 ```
 
 Make sure `~/.pub-cache/bin` is on your `PATH`.
