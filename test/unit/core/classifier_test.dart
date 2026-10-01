@@ -177,6 +177,169 @@ void main() {
     });
   });
 
+  group('a failure is read where it happened', () {
+    String step(String name) => '[10:00:00]: --- Step: $name ---\n';
+
+    test('a rejected key is recognised in a step that uses the key', () {
+      for (final name in <String>[
+        'app_store_connect_api_key',
+        'upload_to_testflight',
+        'pilot',
+        'upload_to_app_store',
+        'deliver',
+        'latest_testflight_build_number',
+        'sync_code_signing',
+        'match',
+      ]) {
+        final report = ErrorClassifier.diagnose(
+          '${step(name)}'
+          '[10:00:01]: Authentication credentials are missing or invalid.\n'
+          '\n'
+          '[!] The request could not be completed\n',
+        );
+        expect(report.cause?.id, 'asc.key_rejected', reason: name);
+      }
+    });
+
+    test('and not in a step that never talks to App Store Connect', () {
+      final report = ErrorClassifier.diagnose(
+        '${step('app_store_connect_api_key')}'
+        '${step('cd /app && flutter build ipa')}'
+        '[10:00:01]: ▸ App Store Connect API returned 401 NOT_AUTHORIZED\n'
+        '\n'
+        '[!] Exit status was 1\n',
+      );
+      expect(report.hasCause('asc.key_rejected'), isFalse);
+      expect(report.recognised, isFalse);
+    });
+
+    test('nor from text outside the failing step', () {
+      final report = ErrorClassifier.diagnose(
+        '${step('sync_code_signing')}'
+        '[10:00:01]: App Store Connect API returned 401 NOT_AUTHORIZED, '
+        'retrying\n'
+        '${step('upload_to_testflight')}'
+        '[10:00:02]: uploading\n'
+        '\n'
+        '[!] The provided entity includes an attribute with a value that has '
+        'already been used\n'
+        '\n'
+        'NOT_AUTHORIZED appears in a changelog down here\n',
+      );
+      expect(report.causes.map((d) => d.id), <String>[
+        'asc.duplicate_build_number',
+      ]);
+    });
+
+    test('match failing on its git remote is not a rejected key', () {
+      final report = ErrorClassifier.diagnose(
+        '${step('sync_code_signing')}'
+        '[10:00:01]: fatal: Authentication failed for '
+        "'https://github.com/acme/certs.git/'\n"
+        '\n'
+        '[!] Error cloning certificates repo, please make sure you have read '
+        'access to the repository you want to use\n',
+      );
+      expect(report.hasCause('asc.key_rejected'), isFalse);
+    });
+
+    test('"invalid" near the API is not on its own a rejected key', () {
+      // The wording of fastlane's changelog, which is what the old pattern
+      // matched in the field.
+      expect(
+        ErrorClassifier.classify(
+          '* [spaceship] retry App Store Connect API requests that fail with '
+          'an invalid response body',
+        ),
+        isNull,
+      );
+    });
+
+    test('an unrecognised failure has no cause rather than a near one', () {
+      final report = ErrorClassifier.diagnose(
+        '${step('build_app')}'
+        '[10:00:01]: something nobody has seen before\n'
+        '\n'
+        '[!] It broke\n',
+      );
+      expect(report.recognised, isFalse);
+      expect(report.cause, isNull);
+      expect(report.attribution.errorLine, '[!] It broke');
+    });
+
+    test('output with no steps is classified whole, as it always was', () {
+      final report = ErrorClassifier.diagnose(
+        'Running Xcode build...\n'
+        'error: exportArchive No Team Found in Archive\n'
+        'App Store Connect API returned 401 NOT_AUTHORIZED',
+      );
+      expect(
+        report.causes.map((d) => d.id),
+        containsAll(<String>['ios.export.no_team', 'asc.key_rejected']),
+      );
+    });
+
+    test('a stale spec repo is recognised by either wording', () {
+      for (final wording in <String>[
+        "Error: CocoaPods's specs repository is too out-of-date to satisfy "
+            'dependencies.',
+        '[!] CocoaPods could not find compatible versions for pod '
+            '"FirebaseAnalytics":',
+      ]) {
+        expect(
+          ErrorClassifier.classify(wording)?.id,
+          ErrorClassifier.podSpecsOutOfDate,
+        );
+      }
+    });
+
+    test('nothing at all diagnoses to nothing', () {
+      for (final output in <String?>[null, '']) {
+        final report = ErrorClassifier.diagnose(output);
+        expect(report.causes, isEmpty);
+        expect(report.warnings, isEmpty);
+      }
+    });
+  });
+
+  group('warnings', () {
+    test('are never a cause, wherever they are printed', () {
+      final report = ErrorClassifier.diagnose(
+        'WARNING: Support for your Ruby version (3.1.1) is going away.\n'
+        'error: exportArchive No Team Found in Archive',
+      );
+      expect(report.causes.map((d) => d.id), <String>['ios.export.no_team']);
+      expect(report.warnings.map((d) => d.id), <String>[
+        'ruby.too_old_for_fastlane',
+      ]);
+    });
+
+    test('come after causes when everything is asked for', () {
+      final all = ErrorClassifier.classifyAll(
+        'WARNING: Support for your Ruby version (3.1.1) is going away.\n'
+        'error: exportArchive No Team Found in Archive',
+      );
+      expect(all.map((d) => d.id), <String>[
+        'ios.export.no_team',
+        'ruby.too_old_for_fastlane',
+      ]);
+    });
+
+    test('the signatures that are warnings are the ones meant to be', () {
+      // Changing a kind changes what is printed in red; do it on purpose.
+      expect(
+        <String>[
+          for (final signature in ErrorClassifier.signatures)
+            if (signature.kind == DiagnosisKind.warning) signature.id,
+        ],
+        unorderedEquals(<String>[
+          'ruby.too_old_for_fastlane',
+          'ios.flavor.missing_version',
+        ]),
+      );
+    });
+  });
+
   group('discipline', () {
     test('every id is unique', () {
       final ids = ErrorClassifier.ids;

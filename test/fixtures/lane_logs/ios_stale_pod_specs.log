@@ -1,0 +1,87 @@
+WARNING: Support for your Ruby version (3.1.1) is going away. fastlane will soon require Ruby 3.3.0 or newer.
+[09:14:02]: ------------------------------
+[09:14:02]: --- Step: default_platform ---
+[09:14:02]: ------------------------------
+[09:14:02]: Driving the lane 'ios beta' 🚀
+[09:14:02]: ---------------------------------------
+[09:14:02]: --- Step: app_store_connect_api_key ---
+[09:14:02]: ---------------------------------------
+[09:14:03]: -------------------------------
+[09:14:03]: --- Step: sync_code_signing ---
+[09:14:03]: -------------------------------
+[09:14:03]: Successfully loaded 'Matchfile' 📄
+[09:14:04]: Cloning remote git repo...
+[09:14:07]: 🔓  Successfully decrypted certificates repo
+[09:14:08]: Installing provisioning profile...
+[09:14:08]: All required keys, certificates and provisioning profiles are installed 🙌
+[09:14:08]: ----------------------------------------------
+[09:14:08]: --- Step: latest_testflight_build_number ---
+[09:14:08]: ----------------------------------------------
+[09:14:10]: Latest upload for live-version 1.4.0 is build: 211
+[09:14:10]: ----------------------------------------------------------------------------------------------------------------------------
+[09:14:10]: --- Step: cd /Users/runner/work/app && flutter build ipa --release --flavor development --target lib/main_development.dart ---
+[09:14:10]: ----------------------------------------------------------------------------------------------------------------------------
+[09:14:10]: $ cd /Users/runner/work/app && flutter build ipa --release --flavor development --target lib/main_development.dart
+[09:14:21]: ▸ Archiving com.acme.app.dev...
+[09:14:24]: ▸ Running pod install...
+[09:14:31]: ▸ CocoaPods' output:
+[09:14:31]: ▸ ↳
+[09:14:31]: ▸       Preparing
+[09:14:31]: ▸     Analyzing dependencies
+[09:14:31]: ▸     Inspecting targets to integrate
+[09:14:31]: ▸       Using `ARCHS` setting to build architectures of target `Pods-Runner`: (``)
+[09:14:31]: ▸     Finding Podfile changes
+[09:14:31]: ▸       - Flutter
+[09:14:31]: ▸       - firebase_analytics
+[09:14:31]: ▸       - firebase_core
+[09:14:31]: ▸     Resolving dependencies of `Podfile`
+[09:14:31]: ▸       CDN: trunk Relative path: CocoaPods-version.yml exists! Returning local because checking is only performed in repo update
+[09:14:31]: ▸     [!] CocoaPods could not find compatible versions for pod "FirebaseAnalytics":
+[09:14:31]: ▸       In snapshot (Podfile.lock):
+[09:14:31]: ▸         FirebaseAnalytics (= 12.19.0)
+[09:14:31]: ▸       In Podfile:
+[09:14:31]: ▸         firebase_analytics (from `.symlinks/plugins/firebase_analytics/ios`) was resolved to 12.4.0, which depends on
+[09:14:31]: ▸           FirebaseAnalytics (= 12.19.0)
+[09:14:31]: ▸     None of your spec sources contain a spec satisfying the dependencies: `FirebaseAnalytics (= 12.19.0), FirebaseAnalytics (= 12.19.0)`.
+[09:14:31]: ▸     You have either:
+[09:14:31]: ▸      * out-of-date source repos which you can update with `pod repo update` or with `pod install --repo-update`.
+[09:14:31]: ▸      * mistyped the name or version.
+[09:14:31]: ▸      * not added the source repo that hosts the Podspec to your Podfile.
+[09:14:31]: ▸ Error: CocoaPods's specs repository is too out-of-date to satisfy dependencies.
+[09:14:31]: ▸ To update the CocoaPods specs, run:
+[09:14:31]: ▸   pod repo update
+[09:14:31]: ▸ Error running pod install
++----------------------------------------------------------------------------------------+
+|                                    fastlane summary                                    |
++------+----------------------------------------------------------------+-------------+
+| Step | Action                                                         | Time (in s) |
++------+----------------------------------------------------------------+-------------+
+| 1    | default_platform                                               | 0           |
+| 2    | app_store_connect_api_key                                      | 0           |
+| 3    | sync_code_signing                                              | 5           |
+| 4    | latest_testflight_build_number                                 | 2           |
+| 💥   | cd /Users/runner/work/app && flutter build ipa --release --... | 21          |
++------+----------------------------------------------------------------+-------------+
+
+[09:14:31]: fastlane finished with errors
+
+#######################################################################
+# fastlane 2.240.0 is available. You are on 2.238.0.
+# You should use the latest version.
+# Please update using `bundle update fastlane`.
+#######################################################################
+
+2.240.0 Improvements
+* [spaceship] retry App Store Connect API requests that fail with an invalid response body
+* [match] fix an invalid provisioning profile type being selected for Mac Catalyst
+* [pilot] handle 401 responses while waiting for build processing
+* [deliver] no longer reports "Authentication credentials" as invalid when the session cookie expired
+* [supply] fix 403 on tracks with no releases
+
+2.239.0 Improvements
+* [app_store_connect_api_key] validate that the key is not an invalid base64 string
+* [spaceship] App Store Connect API: add support for alternative distribution
+
+Please update using `bundle update fastlane`
+
+[!] Exit status of command 'cd /Users/runner/work/app && flutter build ipa --release --flavor development --target lib/main_development.dart' was 1 instead of 0.
