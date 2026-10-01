@@ -1,5 +1,6 @@
 import '../core/config/shipway_config.dart';
 import '../core/env/run_environment.dart';
+import '../core/fastlane/release_target.dart';
 import '../core/secrets/secret_names.dart';
 
 /// How badly a secret is needed.
@@ -19,8 +20,10 @@ class SecretRequirement {
     required this.need,
     required this.wantedBy,
     this.isPath = false,
+    this.holdsBase64 = false,
     this.targets = const <String>{},
-  });
+    String? platform,
+  }) : _platform = platform;
 
   /// The environment-variable name.
   final String name;
@@ -47,11 +50,122 @@ class SecretRequirement {
   /// pre-flight is how people learn to ignore it.
   final Set<String> targets;
 
+  /// True when the value is base64 of a file's bytes — the Android keystore,
+  /// the App Store Connect `.p8`.
+  ///
+  /// `secrets push` uses it to accept a local value that is still the *path*
+  /// to that file and encode it on the way out, rather than upload a path a
+  /// runner cannot open.
+  final bool holdsBase64;
+
+  final String? _platform;
+
+  /// The platform whose job reads this — `ios`, `android` — or null when it
+  /// belongs to neither, like a Slack webhook.
+  ///
+  /// Follows from [targets] wherever there are any, since every destination
+  /// lives on one platform; stated outright only for the few that are tied to
+  /// a platform without being tied to a destination, such as the keychain
+  /// password. One model rather than two, so the two cannot disagree.
+  String? get platform {
+    if (_platform != null) return _platform;
+    final platforms = <String>{
+      for (final id in targets)
+        if (ReleaseTarget.parse(id) case final target?) target.platform,
+    };
+    return platforms.length == 1 ? platforms.single : null;
+  }
+
   bool get isRequired => need == Need.required;
 
   /// Whether this is worth checking before shipping to [target].
   bool appliesTo(String? target) =>
       target == null || targets.isEmpty || targets.contains(target);
+
+  /// Whether a job on [platform] reads this. Something tied to no platform
+  /// applies to every one of them.
+  bool appliesToPlatform(String? platform) =>
+      platform == null || this.platform == null || this.platform == platform;
+}
+
+/// Which part of a project a secrets command is asking about.
+///
+/// A workflow runs iOS and Android as separate jobs, and each is handed only
+/// its own secrets. A check that demands all of them fails the iOS job for a
+/// keystore password it was never going to be given — which is how a
+/// pre-flight gets deleted from a workflow instead of fixed.
+class SecretScope {
+  const SecretScope({this.platform, this.target});
+
+  /// Everything: no narrowing at all.
+  static const SecretScope everything = SecretScope();
+
+  static const List<String> platforms = <String>['ios', 'android'];
+
+  /// `ios` or `android`, when given.
+  final String? platform;
+
+  /// A [ReleaseTarget] id, when given.
+  final String? target;
+
+  /// Builds a scope from the two flags, refusing a pair that contradicts
+  /// itself. `--platform ios --target play` has no honest answer: an empty
+  /// list would read as "nothing is missing".
+  ///
+  /// Throws a [FormatException] whose message is fit to print.
+  static SecretScope parse({String? platform, String? target}) {
+    if (platform != null && !platforms.contains(platform)) {
+      throw FormatException(
+        'Unknown platform "$platform". Expected one of: '
+        '${platforms.join(', ')}.',
+      );
+    }
+    final parsed = ReleaseTarget.parse(target);
+    if (target != null && parsed == null) {
+      throw FormatException(
+        'Unknown target "$target". Expected one of: '
+        '${ReleaseTarget.ids.join(', ')}.',
+      );
+    }
+    if (platform != null && parsed != null && parsed.platform != platform) {
+      throw FormatException(
+        '$target is ${parsed.platformLabel} target, so it cannot be combined '
+        'with --platform $platform.',
+      );
+    }
+    return SecretScope(platform: platform, target: target);
+  }
+
+  bool get isEverything => platform == null && target == null;
+
+  /// The platform in play, stated or implied by the target.
+  String? get effectivePlatform =>
+      platform ?? ReleaseTarget.parse(target)?.platform;
+
+  bool includes(SecretRequirement requirement) =>
+      requirement.appliesTo(target) &&
+      requirement.appliesToPlatform(effectivePlatform);
+
+  /// Whether something read by [platform]'s job for any of [targets] is in
+  /// scope — the same question as [includes], for a credential rather than a
+  /// single variable.
+  bool covers({required String platform, required Set<String> targets}) {
+    final wanted = effectivePlatform;
+    if (wanted != null && wanted != platform) return false;
+    return target == null || targets.contains(target);
+  }
+
+  /// How the scope is written in a sentence, or null when there is none.
+  String? get label => switch ((platform, target)) {
+    (null, null) => null,
+    (final String platform, null) => platform,
+    (_, final String target) => '${effectivePlatform ?? platform} / $target',
+  };
+
+  Map<String, String?> toJson() => <String, String?>{
+    'platform': effectivePlatform,
+    'target': target,
+  };
 }
 
 /// Works out which secrets a config implies.
@@ -71,6 +185,7 @@ abstract final class SecretRequirements {
     required RunEnvironment environment,
     String? appId,
     String? flavor,
+    SecretScope scope = SecretScope.everything,
   }) {
     final app = config.appOrNull(appId ?? config.defaultAppId);
     if (app == null) return const <SecretRequirement>[];
@@ -81,14 +196,18 @@ abstract final class SecretRequirements {
       Need need,
       String wantedBy, {
       bool isPath = false,
+      bool holdsBase64 = false,
       Set<String> targets = const <String>{},
+      String? platform,
     }) => requirements.add(
       SecretRequirement(
         name: name,
         need: need,
         wantedBy: wantedBy,
         isPath: isPath,
+        holdsBase64: holdsBase64,
         targets: targets,
+        platform: platform,
       ),
     );
 
@@ -157,7 +276,13 @@ abstract final class SecretRequirements {
     }.entries) {
       final name = entry.value;
       if (name != null) {
-        add(name, Need.required, entry.key, targets: apple);
+        add(
+          name,
+          Need.required,
+          entry.key,
+          holdsBase64: name == apiKey?.p8Ref,
+          targets: apple,
+        );
       }
     }
 
@@ -184,6 +309,7 @@ abstract final class SecretRequirements {
         android!.keystoreRef!,
         Need.required,
         'signing.android.keystore_ref',
+        holdsBase64: true,
         targets: androidTargets,
       );
     }
@@ -272,17 +398,19 @@ abstract final class SecretRequirements {
         SecretNames.keychainPassword,
         Need.optional,
         'the keychain shipway creates off-workstation; generated when unset',
+        // Tied to no destination, but only an iOS job ever makes a keychain.
+        platform: 'ios',
       );
     }
 
-    return _deduplicate(requirements);
+    return _deduplicate(requirements.where(scope.includes));
   }
 
   /// Keeps the strongest need and the first reason when a name is asked for
   /// twice, so a variable that is optional in one place and required in
   /// another is reported as required.
   static List<SecretRequirement> _deduplicate(
-    List<SecretRequirement> requirements,
+    Iterable<SecretRequirement> requirements,
   ) {
     final byName = <String, SecretRequirement>{};
     for (final requirement in requirements) {

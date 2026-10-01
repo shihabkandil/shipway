@@ -416,11 +416,11 @@ written after their own build began.
 
 ## `shipway secrets`
 
-> Show which credentials this project needs, put them somewhere, and say what
-> a CI repository has to be given.
+> Show which credentials this project needs, put them somewhere, check they
+> still work, and give a CI repository the ones it has to have.
 
 ```
-shipway secrets list|check|set|import|export
+shipway secrets list|check|set|import|export|push
 ```
 
 `list` reports; `check` exits `2` when a required credential is missing. Run
@@ -455,6 +455,91 @@ so the config is the single source of truth for what a project needs. A test
 asserts the names checked here are the ones the generated lanes actually read —
 a pre-flight that checks a different name than the lane reads is worse than
 none, because it reports green and the build still fails.
+
+### One job's worth: `--platform` and `--target`
+
+```
+shipway secrets list|check [--platform ios|android] [--target testflight|appstore|play|firebase]
+```
+
+A workflow runs iOS and Android as separate jobs and hands each only its own
+secrets. Unscoped, `check` in the iOS job fails for a keystore password that job
+was never going to be given — and a pre-flight that fails for the wrong reason
+gets deleted rather than fixed.
+
+| Invocation | Requires |
+|---|---|
+| `check --env ci --platform ios` | The App Store Connect key and the match credentials. |
+| `check --env ci --platform android` | The keystore and its passwords, plus every configured Android destination's account. |
+| `check --env ci --platform android --target firebase` | The keystore and its passwords, and the Firebase service account — not Play's. |
+| `check --env ci --target testflight` | As `--platform ios`: a target implies its platform. |
+
+Nothing outside the scope is listed at all, missing or otherwise, and the report
+says it is scoped so a short list is not mistaken for a complete one. What
+belongs to neither platform — a Slack webhook — is shown under every scope,
+optional as it always was. `--platform ios --target play` is refused: an empty
+list would read as "nothing is missing".
+
+`--json` carries the scope as `"scope": {"platform": …, "target": …}`, and each
+secret its `platform`.
+
+`push` takes the same two flags.
+
+### `shipway secrets check --verify`
+
+> Ask each service whether the key it issued is still good.
+
+```
+shipway secrets check --verify [--platform …] [--target …] [--env …]
+```
+
+Presence is not validity. A team rotated three good App Store Connect secrets
+because the only way to find out whether a key worked was a release run, and
+after a failed one rotating felt cheaper than finding out. `--verify` makes one
+authenticated, read-only request per credential, and changes nothing on the
+other side.
+
+| Credential | What is asked | Answers |
+|---|---|---|
+| App Store Connect API key | `GET /v1/apps?limit=1` with a token signed from the `.p8` | `200` ok · `401` rejected · `403` valid, but its role may not list apps |
+| Firebase service account | The OAuth token exchange at `oauth2.googleapis.com` | a token: ok · `4xx`: rejected, with Google's reason |
+| Play service account | The same exchange, for the `androidpublisher` scope | as above |
+| match | Only that `MATCH_GIT_BASIC_AUTHORIZATION` decodes to `user:token` | repository access and the passphrase are checked by `shipway release` pre-flight |
+
+```
+Verifying with each service:
+
+               ok App Store Connect API key
+                  ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8_BASE64
+                  App Store Connect accepted the key
+      not checked match
+                  MATCH_PASSWORD, MATCH_GIT_BASIC_AUTHORIZATION
+                  repository access and the passphrase are checked by `shipway release` pre-flight
+  could not check Firebase service account
+                  FIREBASE_SERVICE_ACCOUNT_JSON_PATH
+                  could not reach oauth2.googleapis.com (Network is unreachable)
+```
+
+- **ok** — the service accepted it.
+- **rejected** — the service refused it, and its reason is printed. Exits `2`.
+- **valid, limited** — a `403` from App Store Connect: the key is live and its
+  role is too narrow. Not a failure, and not a key to rotate.
+- **could not check** — no network, a timeout, a `5xx`. **Never fails the
+  command by itself**: a network that is down says nothing about a key.
+- **not checked** — a part is unset (the list above already says so), or there
+  is nothing cheap and safe to ask.
+
+A token exchange proves the *key* is live, not that the account may publish
+your app: that is a permission in the Play Console or Firebase, and Firebase's
+is checked by `shipway release` before it builds.
+
+The tokens are signed in shipway itself, so no private key is written to disk
+and no `openssl` is needed. They live for five minutes, are registered with the
+redactor, and are never printed. A service account's `token_uri` is ignored —
+the assertion goes to Google and nowhere a file says.
+
+`--verify` honours `--env` like the rest of `check`: on `ci` it reads only the
+environment, so it verifies exactly what the job was given.
 
 ### Where secrets are looked for
 
@@ -565,6 +650,76 @@ generated workflow reads — in both directions. A name here the workflow never
 reads is a value someone typed into GitHub for nothing; one the workflow reads
 that is missing here is a build that fails at the step this was supposed to
 cover.
+
+### `shipway secrets push`
+
+> Set this project's CI secrets on its GitHub repository, from the values this
+> machine already has.
+
+```
+shipway secrets push [--platform ios|android] [--target <t>] [--repo <owner/name>]
+                     [--dry-run] [--flavor <f>] [--yes]
+```
+
+`export` says what the repository needs; `push` puts it there. It needs the
+[GitHub CLI](https://cli.github.com), signed in (`gh auth login`), and says so
+plainly when it is absent or signed out.
+
+```
+$ shipway secrets push --platform android
+
+Repository secrets for android → acme/app
+Read on this machine (workstation, detected) from: environment → .env → keychain.
+
+     push ANDROID_KEYSTORE_BASE64
+          from keychain (shipway)
+     push FIREBASE_DEV_SERVICE_ACCOUNT_JSON
+          from the file FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH names (set in .env)
+  missing ANDROID_KEY_PASSWORD
+          ANDROID_KEY_PASSWORD is not set on this machine
+
+? Set 2 secrets on acme/app? Any that exist there are overwritten. (y/N)
+```
+
+**It writes somewhere other people can see, so it asks first.** The plan —
+which names, read from where, sent to which repository — is printed before
+anything is sent. On a workstation it then asks; anywhere a prompt would hang it
+refuses unless given `--yes`. `--dry-run` prints the plan and sends nothing.
+
+| Option | Meaning |
+|---|---|
+| `--repo=<owner/name>` | The repository. Defaults to the one this checkout belongs to (`gh repo view`). |
+| `--dry-run` | Show the plan and send nothing. |
+| `--platform`, `--target` | Push only one job's secrets. |
+| `--flavor=<f>` | Read `.env.<f>` over `.env`. |
+| `--yes` | Do not ask. Required where shipway may not prompt. |
+
+**Names and encodings are shipway's problem, not yours.** The set is the one
+`export` names — the secrets the generated workflow reads, no more — and each
+value is sent in the form that workflow decodes:
+
+| Locally | In the repository | Sent as |
+|---|---|---|
+| `FIREBASE_SERVICE_ACCOUNT_JSON_PATH`, `PLAY_SERVICE_ACCOUNT_JSON_PATH`, a flavor's `…_JSON_PATH` | the same name without `_PATH` | the file's content, unencoded — the workflow writes it back with `echo` |
+| The keystore and `.p8` variables | the same name | base64. Stored that way already, it goes as it is; still a path to the file, shipway encodes the bytes, unwrapped |
+| Anything else | the same name | unchanged |
+
+**No value reaches a command line or a log.** Each is handed to
+`gh secret set <NAME> --repo <owner/name>` on standard input and registered with
+the redactor first, so it is not in `ps`, not in shell history, and masked in
+anything `gh` prints back.
+
+A required secret that does not resolve here is **skipped and named** — by the
+name to set locally — the rest are still pushed, and the command exits `2`. So
+does a secret GitHub refuses. Optional overrides are never pushed.
+
+**`--env` and push.** Everywhere else `--env` says where shipway is *running*.
+Push always targets CI, and always derives its list for `ci`, so
+`shipway secrets push` needs no `--env`. `shipway secrets push --env ci` is
+accepted and means what it reads as — the CI secrets — rather than "read only
+what a runner could see", which on a laptop is nothing. Values are read from the
+machine you are on, through its usual chain. `--env persistent` keeps its usual
+meaning: read the environment and `.env`, and do not prompt.
 
 ## `shipway setup`
 

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-/// What came back from one POST.
+/// What came back from one request.
 class HttpReply {
   const HttpReply({
     required this.statusCode,
@@ -19,8 +19,8 @@ class HttpReply {
   bool get ok => statusCode >= 200 && statusCode < 300;
 }
 
-/// Why a POST produced no reply at all: no network, a refused connection, a
-/// server that never answered.
+/// Why a request produced no reply at all: no network, a refused connection,
+/// a server that never answered.
 class HttpPostException implements Exception {
   const HttpPostException(this.message);
 
@@ -33,9 +33,10 @@ class HttpPostException implements Exception {
 /// The one door to the network, as [ProcessRunner] is the one door to other
 /// programs.
 ///
-/// Only notifications use it. Everything that ships an app goes through
-/// fastlane, which owns its own networking; this exists so that telling
-/// somebody about a release is testable without a Slack workspace.
+/// Notifications use it, and `shipway secrets check --verify`. Everything that
+/// ships an app goes through fastlane, which owns its own networking; this
+/// exists so that telling somebody about a release — or asking a service
+/// whether a key is still good — is testable without the service.
 abstract class HttpPoster {
   /// POSTs [body] as JSON to [url].
   ///
@@ -44,6 +45,19 @@ abstract class HttpPoster {
   Future<HttpReply> postJson(
     Uri url,
     Object body, {
+    Map<String, String> headers = const <String, String>{},
+  });
+
+  /// POSTs [fields] as `application/x-www-form-urlencoded` to [url].
+  ///
+  /// The shape an OAuth token endpoint takes, which is not JSON.
+  Future<HttpReply> postForm(Uri url, Map<String, String> fields);
+
+  /// GETs [url].
+  ///
+  /// Throws [HttpPostException] when there is no reply, as [postJson] does.
+  Future<HttpReply> get(
+    Uri url, {
     Map<String, String> headers = const <String, String>{},
   });
 }
@@ -60,10 +74,50 @@ class SystemHttpPoster implements HttpPoster {
     Uri url,
     Object body, {
     Map<String, String> headers = const <String, String>{},
-  }) async {
+  }) => _exchange(url, (client) async {
+    final request = await client.postUrl(url);
+    request.headers.contentType = ContentType(
+      'application',
+      'json',
+      charset: 'utf-8',
+    );
+    headers.forEach(request.headers.set);
+    request.add(utf8.encode(jsonEncode(body)));
+    return request;
+  });
+
+  @override
+  Future<HttpReply> postForm(Uri url, Map<String, String> fields) =>
+      _exchange(url, (client) async {
+        final request = await client.postUrl(url);
+        request.headers.contentType = ContentType(
+          'application',
+          'x-www-form-urlencoded',
+          charset: 'utf-8',
+        );
+        request.add(utf8.encode(Uri(queryParameters: fields).query));
+        return request;
+      });
+
+  @override
+  Future<HttpReply> get(
+    Uri url, {
+    Map<String, String> headers = const <String, String>{},
+  }) => _exchange(url, (client) async {
+    final request = await client.getUrl(url);
+    headers.forEach(request.headers.set);
+    return request;
+  });
+
+  /// One request and its reply, with every way of getting no reply turned
+  /// into the same exception.
+  Future<HttpReply> _exchange(
+    Uri url,
+    Future<HttpClientRequest> Function(HttpClient client) open,
+  ) async {
     final client = HttpClient()..connectionTimeout = timeout;
     try {
-      return await _post(client, url, body, headers).timeout(timeout);
+      return await _send(client, open).timeout(timeout);
     } on TimeoutException {
       throw HttpPostException(
         '${url.host} did not answer within ${timeout.inSeconds}s',
@@ -73,6 +127,8 @@ class SystemHttpPoster implements HttpPoster {
       throw HttpPostException(
         'could not reach ${url.host} (${e.osError?.message ?? e.message})',
       );
+    } on HandshakeException catch (e) {
+      throw HttpPostException('${url.host}: ${e.message}');
     } on HttpException catch (e) {
       throw HttpPostException('${url.host}: ${e.message}');
     } finally {
@@ -80,20 +136,11 @@ class SystemHttpPoster implements HttpPoster {
     }
   }
 
-  Future<HttpReply> _post(
+  Future<HttpReply> _send(
     HttpClient client,
-    Uri url,
-    Object body,
-    Map<String, String> headers,
+    Future<HttpClientRequest> Function(HttpClient client) open,
   ) async {
-    final request = await client.postUrl(url);
-    request.headers.contentType = ContentType(
-      'application',
-      'json',
-      charset: 'utf-8',
-    );
-    headers.forEach(request.headers.set);
-    request.add(utf8.encode(jsonEncode(body)));
+    final request = await open(client);
     final response = await request.close();
     final text = await response.transform(utf8.decoder).join();
     final retryAfter = int.tryParse(
