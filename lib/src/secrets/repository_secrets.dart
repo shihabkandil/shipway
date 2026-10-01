@@ -5,9 +5,23 @@ import 'secret_requirements.dart';
 
 /// One secret to set on the CI repository, and what wants it.
 class RepositorySecret {
-  const RepositorySecret({required this.name, required this.wantedBy});
+  const RepositorySecret({
+    required this.name,
+    required this.wantedBy,
+    required this.requirement,
+  });
 
+  /// The name in the repository, which for a file is not the local one.
   final String name;
+
+  /// What the lane reads, and so what resolves on a workstation. `secrets
+  /// push` reads this one and writes [name]; keeping both on one object is
+  /// what stops the two halves of that mapping drifting apart.
+  final SecretRequirement requirement;
+
+  /// True when the repository holds a file's content under a different name
+  /// than the path variable the lane reads.
+  bool get isRenamed => name != requirement.name;
 
   /// Why it is on the list, carried through so the script answers "what is
   /// this for?" without a second document.
@@ -27,12 +41,17 @@ class RepositorySecret {
 /// *content*. That mapping lives with the names, beside the workflow that
 /// relies on it.
 abstract final class RepositorySecrets {
-  static List<RepositorySecret> of(ShipwayConfig config, {String? appId}) {
+  static List<RepositorySecret> of(
+    ShipwayConfig config, {
+    String? appId,
+    SecretScope scope = SecretScope.everything,
+  }) {
     final byName = <String, RepositorySecret>{};
     for (final requirement in SecretRequirements.of(
       config,
       environment: RunEnvironment.ephemeralCi,
       appId: appId,
+      scope: scope,
     )) {
       // Optional ones are overrides. Telling someone to set eleven secrets
       // when six are needed is how a checklist stops being read.
@@ -45,6 +64,7 @@ abstract final class RepositorySecrets {
         name,
         () => RepositorySecret(
           name: name,
+          requirement: requirement,
           wantedBy: requirement.isPath && name != requirement.name
               ? '${requirement.wantedBy}; the workflow writes it to a file '
                     'and sets ${requirement.name}'

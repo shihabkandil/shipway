@@ -7,6 +7,8 @@ import 'package:mason_logger/mason_logger.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/config/shipway_config.dart';
+import '../../core/fastlane/release_target.dart';
+import '../../secrets/credential_verifier.dart';
 import '../../secrets/repository_secrets.dart';
 import '../../secrets/secret_export.dart';
 import '../../secrets/secret_requirements.dart';
@@ -14,8 +16,10 @@ import '../../secrets/secret_resolver.dart';
 import '../../secrets/secret_store.dart';
 import '../exit_codes.dart';
 import '../run_context.dart';
+import 'secrets_push.dart';
+import 'secrets_verify.dart';
 
-/// `shipway secrets list|check|set|import|export`.
+/// `shipway secrets list|check|set|import|export|push`.
 ///
 /// `list` and `check` answer the same question — what does this project need,
 /// and is it here? — and neither ever prints a value. That is a property of the
@@ -29,7 +33,8 @@ import '../run_context.dart';
 /// `set` and `import` are the only things in shipway that hold a credential,
 /// and they hold it exactly long enough to hand it to the keychain. `export`
 /// holds none at all: it emits the *names* a CI repository needs, which is the
-/// half of the loop a generated workflow cannot close for you.
+/// half of the loop a generated workflow cannot close for you. `push` closes
+/// it, and lives in [SecretsPush]; this class parses flags and hands over.
 class SecretsCommand extends Command<int> {
   SecretsCommand(this._contextProvider) {
     argParser
@@ -71,6 +76,35 @@ class SecretsCommand extends Command<int> {
         help: 'export: what shape to emit.',
         allowed: ExportFormat.names,
         defaultsTo: 'gh',
+      )
+      ..addOption(
+        'platform',
+        help:
+            'list, check, push: only what a job on this platform needs. '
+            'What each job of a workflow should pass.',
+        allowed: SecretScope.platforms,
+      )
+      ..addOption(
+        'target',
+        help: 'list, check, push: only what this destination needs.',
+        allowed: ReleaseTarget.ids,
+      )
+      ..addFlag(
+        'verify',
+        negatable: false,
+        help:
+            'check: also ask each service whether its credential is still '
+            'valid. One read-only request each.',
+      )
+      ..addOption(
+        'repo',
+        help: 'push: the GitHub repository. Defaults to this checkout\'s.',
+        valueHelp: 'owner/name',
+      )
+      ..addFlag(
+        'dry-run',
+        negatable: false,
+        help: 'push: show what would be sent, and send nothing.',
       );
   }
 
@@ -86,7 +120,7 @@ class SecretsCommand extends Command<int> {
       'Show which credentials this project needs, and whether they are set.';
 
   @override
-  String get invocation => 'shipway secrets list|check|set|import|export';
+  String get invocation => 'shipway secrets list|check|set|import|export|push';
 
   static const List<String> _actions = <String>[
     'list',
@@ -94,6 +128,7 @@ class SecretsCommand extends Command<int> {
     'set',
     'import',
     'export',
+    'push',
   ];
 
   @override
@@ -110,16 +145,45 @@ class SecretsCommand extends Command<int> {
       return ShipwayExit.userError;
     }
 
+    if ((results['verify'] as bool) && action != 'check') {
+      logger.err('--verify belongs to `shipway secrets check`.');
+      return ShipwayExit.userError;
+    }
+
+    final SecretScope scope;
+    try {
+      scope = SecretScope.parse(
+        platform: results['platform'] as String?,
+        target: results['target'] as String?,
+      );
+    } on FormatException catch (e) {
+      logger.err(e.message);
+      return ShipwayExit.userError;
+    }
+
     final config = await context.requireConfig();
     final environment = context.environment;
 
     if (action == 'export') return _export(config);
+    if (action == 'push') {
+      return SecretsPush(context).run(
+        config,
+        scope: scope,
+        dryRun: results['dry-run'] as bool,
+        repository: results['repo'] as String?,
+        flavor: results['flavor'] as String?,
+      );
+    }
 
+    // Unscoped for `set` and `import`, which ask "is this a name the config
+    // knows?" — a question about the whole project.
+    final scoped = action == 'list' || action == 'check';
     final requirements = SecretRequirements.of(
       config,
       environment: environment.environment,
       appId: context.appId,
       flavor: results['flavor'] as String?,
+      scope: scoped ? scope : SecretScope.everything,
     );
     // `set` and `import` come before the empty-list shortcut: a config that
     // declares nothing yet is a reason not to validate a name, not a reason to
@@ -129,8 +193,10 @@ class SecretsCommand extends Command<int> {
 
     if (requirements.isEmpty) {
       logger.info(
-        'This config declares no credentials. Add signing or targets to '
-        'shipway.yaml and they will be listed here.',
+        scope.isEverything
+            ? 'This config declares no credentials. Add signing or targets '
+                  'to shipway.yaml and they will be listed here.'
+            : 'This config declares no credentials for ${scope.label}.',
       );
       return ShipwayExit.success;
     }
@@ -140,19 +206,45 @@ class SecretsCommand extends Command<int> {
       projectRoot: context.projectRoot,
       runner: context.runner,
       redactor: context.redactor,
+      processEnvironment: context.processEnvironment,
       flavor: results['flavor'] as String?,
       host: context.host,
     );
     final statuses = await resolver.statuses(requirements);
 
+    // After the presence check and through the same resolver, so `--verify`
+    // never looks anywhere the environment forbids, and a credential the
+    // report above calls missing is said to be unverified rather than
+    // quietly left out.
+    final verified = results['verify'] as bool
+        ? await CredentialVerifier(
+            resolver: resolver,
+            http: context.http,
+            redactor: context.redactor,
+            projectRoot: context.projectRoot,
+            clock: () => context.now,
+          ).verify(
+            config,
+            appId: context.appId,
+            flavor: results['flavor'] as String?,
+            scope: scope,
+          )
+        : null;
+
     if (results['json'] as bool) {
-      logger.info(_json(statuses, resolver));
+      logger.info(_json(statuses, resolver, scope, verified));
     } else {
-      _report(statuses, resolver, checking: action == 'check');
+      _report(statuses, resolver, scope, checking: action == 'check');
+      if (verified != null) SecretsVerifyReport.print(logger, verified);
     }
 
     final blocking = statuses.where((s) => s.blocks).toList();
     if (action == 'check' && blocking.isNotEmpty) {
+      return ShipwayExit.environmentError;
+    }
+    // "Could not check" is deliberately not here: a network that is down
+    // says nothing about a key, and must not fail a job on its own.
+    if (verified != null && verified.any((r) => r.outcome.fails)) {
       return ShipwayExit.environmentError;
     }
     return ShipwayExit.success;
@@ -363,7 +455,8 @@ class SecretsCommand extends Command<int> {
 
   void _report(
     List<SecretStatus> statuses,
-    SecretResolver resolver, {
+    SecretResolver resolver,
+    SecretScope scope, {
     required bool checking,
   }) {
     final context = _context;
@@ -379,8 +472,14 @@ class SecretsCommand extends Command<int> {
               '${resolver.chain.map(_sourceLabel).join(' → ')}.',
             ) ??
             '',
-      )
-      ..info('');
+      );
+    if (scope.label case final label?) {
+      // Stated, so a short list is read as "scoped" rather than "complete".
+      logger.info(
+        darkGray.wrap('Scope: $label. Other credentials are not shown.') ?? '',
+      );
+    }
+    logger.info('');
 
     for (final status in statuses) {
       final label = _label(status);
@@ -449,24 +548,35 @@ class SecretsCommand extends Command<int> {
     _ => source.name,
   };
 
-  String _json(List<SecretStatus> statuses, SecretResolver resolver) {
+  String _json(
+    List<SecretStatus> statuses,
+    SecretResolver resolver,
+    SecretScope scope,
+    List<VerifyResult>? verified,
+  ) {
     final environment = _context.environment;
     return const JsonEncoder.withIndent('  ').convert(<String, dynamic>{
       'environment': environment.environment.flagName,
       'environmentSource': environment.source.name,
       'chain': resolver.chain.map((s) => s.name).toList(),
+      'scope': scope.toJson(),
       'secrets': <Map<String, dynamic>>[
         for (final status in statuses)
           <String, dynamic>{
             'name': status.name,
             'required': status.requirement.isRequired,
             'wantedBy': status.requirement.wantedBy,
+            'platform': status.requirement.platform,
             'source': status.source.name,
             'present': status.source.found,
             'blocks': status.blocks,
           },
       ],
       'blocking': statuses.where((s) => s.blocks).map((s) => s.name).toList(),
+      if (verified != null)
+        'verified': <Map<String, Object?>>[
+          for (final result in verified) result.toJson(),
+        ],
     });
   }
 }
