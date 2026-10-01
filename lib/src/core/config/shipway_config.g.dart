@@ -733,15 +733,25 @@ Map<String, dynamic> _$SecretsConfigToJson(SecretsConfig instance) =>
 
 CiConfig _$CiConfigFromJson(Map json) =>
     $checkedCreate('CiConfig', json, ($checkedConvert) {
-      $checkKeys(json, allowedKeys: const ['environment']);
+      $checkKeys(json, allowedKeys: const ['environment', 'runner']);
       final val = CiConfig(
         environment: $checkedConvert('environment', (v) => v as String?),
+        runner: $checkedConvert(
+          'runner',
+          (v) => $enumDecodeNullable(_$CiRunnerEnumMap, v),
+        ),
       );
       return val;
     });
 
 Map<String, dynamic> _$CiConfigToJson(CiConfig instance) => <String, dynamic>{
   'environment': ?instance.environment,
+  'runner': ?_$CiRunnerEnumMap[instance.runner],
+};
+
+const _$CiRunnerEnumMap = {
+  CiRunner.hosted: 'hosted',
+  CiRunner.selfHosted: 'self-hosted',
 };
 
 NotifyConfig _$NotifyConfigFromJson(Map json) => $checkedCreate(

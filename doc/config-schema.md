@@ -103,6 +103,7 @@ notify:
     failure: "<!here> *{name}* failed at {failed_step}"
 
 ci:
+  runner: self-hosted          # hosted | self-hosted — which workflow to generate
   environment: persistent      # workstation | ci | persistent
 
 pipelines:                     # named sequences, run with `shipway run <name>`
@@ -162,6 +163,32 @@ must have somewhere to live.
 | `flavors.<name>.entrypoint` | Flavors named `development`/`production` very often have `main_dev.dart`/`main_prod.dart`. Assuming `main_<flavor>.dart` would build the wrong app under the right bundle id — a failure that looks like success. |
 | `flavors.<name>.version_name_suffix` | Read from Gradle's `versionNameSuffix`. Without it the round trip loses the value and `status` reports drift on a freshly imported project. |
 | `flavors.<name>.dimension` | Recorded only when it is not `environment`, the dimension shipway generates. Projects using another name would otherwise drift forever. |
+
+## `ci` — where this project is built
+
+Two keys that sound alike and answer different questions.
+
+| Key | Values | Read by | Answers |
+|---|---|---|---|
+| `ci.runner` | `hosted` (default), `self-hosted` | `shipway generate ci` | Whose machines does the workflow run on? |
+| `ci.environment` | `workstation`, `ci`, `persistent` | every command, on every machine | What kind of machine is *this*? |
+
+`ci.runner` decides the shape of `.github/workflows/release.yml` and nothing
+else. `hosted` installs a toolchain and caches it, because the machine is clean
+and about to be thrown away. `self-hosted` uses no setup action and no cache,
+runs on `[self-hosted, macOS]`, passes `--env persistent`, and ends each job
+with `shipway cleanup` under `if: always()`. `shipway init` asks which, or takes
+`--runner hosted|self-hosted`; it is left unset when nobody can be asked.
+
+It is a key of its own, rather than a reuse of `ci.environment`, because
+`ci.environment` is read by every machine that loads the file — set it to
+`persistent` and a developer's laptop stops prompting and stops using the login
+keychain. `ci.runner` changes nothing on a laptop. The generated workflow tells
+the runner what it is with `--env`, so most projects need only `ci.runner`.
+
+The workflow is created once and then yours. Changing `ci.runner` afterwards
+does not rewrite it; `shipway generate ci` says the file on disk is for the
+other kind of runner and leaves it alone. Move it aside to get the other shape.
 
 ## `notify` — telling a channel how a release went
 

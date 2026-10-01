@@ -16,6 +16,7 @@ import '../core/managed/managed_block.dart';
 import '../version.dart';
 import 'commands/adopt_command.dart';
 import 'commands/build_command.dart';
+import 'commands/cleanup_command.dart';
 import 'commands/disown_command.dart';
 import 'commands/release_command.dart';
 import 'commands/run_command.dart';
@@ -101,6 +102,7 @@ class ShipwayCommandRunner extends CommandRunner<int> {
     addCommand(RunCommand(() => context, run));
     addCommand(SetupCommand(() => context));
     addCommand(NotifyCommand(() => context));
+    addCommand(CleanupCommand(() => context));
   }
 
   final Logger _logger;

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:args/command_runner.dart';
 import 'package:mason_logger/mason_logger.dart';
 
@@ -6,6 +8,8 @@ import '../../generators/generated_file_writer.dart';
 import '../../core/model/project_model.dart';
 import '../../generators/generator_registry.dart';
 import '../../generators/orphan_sweep.dart';
+import '../../generators/workflow_generator.dart';
+import '../../core/config/shipway_config.dart';
 import '../../inspect/xcodeproj_bridge.dart';
 import '../../platform/ios/info_plist_mutator.dart';
 import '../../platform/ios/legacy_xcconfig_cleanup.dart';
@@ -81,8 +85,15 @@ class GenerateCommand extends Command<int> {
       appId: context.appId,
     );
 
+    // The one place toolchain versions reach the workflow. Nothing records
+    // them yet, so nothing is pinned; whoever does passes them here.
+    const pins = WorkflowPins();
     final files = <GeneratedFile>[
-      for (final generator in generators) ...generator.render(app),
+      for (final generator in generators)
+        ...(generator is WorkflowGenerator
+                ? generator.withPins(pins)
+                : generator)
+            .render(app),
     ];
     if (files.isEmpty) {
       logger.info(
@@ -124,6 +135,7 @@ class GenerateCommand extends Command<int> {
     }
 
     final exit = _report(results_, sweep: sweep, dryRun: dryRun);
+    _noteWorkflowForOtherRunner(app, files);
 
     // The Xcode project is mutated after the generators, because the schemes
     // they write name the build configurations this creates. Skipped when
@@ -141,6 +153,37 @@ class GenerateCommand extends Command<int> {
     }
 
     return exit;
+  }
+
+  /// Says so when the workflow on disk was written for the other kind of
+  /// runner than `ci.runner` now names.
+  ///
+  /// The workflow is create-once, so changing `ci.runner` changes nothing that
+  /// is already there — and a config saying `self-hosted` beside a workflow
+  /// that installs and caches a toolchain is exactly the state this key
+  /// exists to prevent. Never rewritten: it is somebody's pipeline by now.
+  void _noteWorkflowForOtherRunner(ResolvedApp app, List<GeneratedFile> files) {
+    if (!files.any((f) => f.path == WorkflowGenerator.path)) return;
+    final existing = File(_context.resolve(WorkflowGenerator.path));
+    if (!existing.existsSync()) return;
+    if (WorkflowGenerator.runnerOf(existing.readAsStringSync()) ==
+        app.ciRunner) {
+      return;
+    }
+
+    final wanted = app.ciRunner == CiRunner.selfHosted
+        ? 'a self-hosted runner'
+        : 'GitHub-hosted runners';
+    _context.logger
+      ..info('')
+      ..warn(
+        '${WorkflowGenerator.path} was not written for $wanted, which is what '
+        'ci.runner now says.',
+      )
+      ..info(
+        '  shipway leaves it alone because it is yours. To get the other '
+        'shape, move it aside and run `shipway generate ci`.',
+      );
   }
 
   /// True when the selected generators include anything iOS-shaped.

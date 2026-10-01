@@ -5,6 +5,7 @@ import 'package:mason_logger/mason_logger.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/config/config_loader.dart';
+import '../../core/config/shipway_config.dart';
 import '../../inspect/config_from_project.dart';
 import '../../inspect/config_writer.dart';
 import '../../inspect/project_inspector.dart';
@@ -20,11 +21,23 @@ import '../run_context.dart';
 /// and hands off to `import` whenever there is anything to read.
 class InitCommand extends Command<int> {
   InitCommand(this._contextProvider) {
-    argParser.addFlag(
-      'force',
-      negatable: false,
-      help: 'Overwrite an existing shipway.yaml.',
-    );
+    argParser
+      ..addFlag(
+        'force',
+        negatable: false,
+        help: 'Overwrite an existing shipway.yaml.',
+      )
+      ..addOption(
+        'runner',
+        help:
+            'Where CI will run, recorded as ci.runner. Asked when omitted and '
+            'shipway may prompt.',
+        allowed: CiRunner.ids,
+        allowedHelp: const <String, String>{
+          'hosted': 'GitHub-hosted runners: a clean machine per job.',
+          'self-hosted': 'A machine you keep, such as a Mac mini.',
+        },
+      );
   }
 
   final ContextProvider _contextProvider;
@@ -125,7 +138,11 @@ class InitCommand extends Command<int> {
       return ShipwayExit.success;
     }
 
-    final config = ConfigFromProject.build(model);
+    final derived = ConfigFromProject.build(model);
+    final runner = _runner(argResults!['runner'] as String?);
+    final config = runner == null
+        ? derived
+        : derived.withCi(CiConfig(runner: runner));
     final outPath = p.join(context.projectRoot, ConfigLoader.defaultFileName);
     await File(outPath).writeAsString(
       ConfigWriter.render(
@@ -143,6 +160,12 @@ class InitCommand extends Command<int> {
       ..info('Next:')
       ..info('  shipway status   check it matches your project')
       ..info('  shipway doctor   check this machine can ship it');
+    if (runner != null) {
+      logger.info(
+        '  shipway generate ci   write the release workflow for '
+        '${runner == CiRunner.selfHosted ? 'a self-hosted runner' : 'GitHub-hosted runners'}',
+      );
+    }
 
     if (model.uncertainties.isNotEmpty) {
       logger.info(
@@ -152,5 +175,44 @@ class InitCommand extends Command<int> {
       );
     }
     return ShipwayExit.success;
+  }
+
+  static const String _hostedChoice = 'GitHub-hosted runners';
+  static const String _selfHostedChoice =
+      'A self-hosted runner (a machine you keep, like a Mac mini)';
+  static const String _undecidedChoice = 'Not decided yet';
+
+  /// Whose machines CI will run on, or null when nobody has said.
+  ///
+  /// The one thing `init` asks rather than reads: nothing in a project says
+  /// where it will be built, and the two answers want different workflows — a
+  /// hosted one installs and caches a toolchain, which on a machine that keeps
+  /// running is ten things to undo by hand.
+  ///
+  /// Asked only where a question can be answered. Left unset otherwise, which
+  /// generates for hosted runners and can be changed in one line.
+  CiRunner? _runner(String? flag) {
+    final fromFlag = CiRunner.parse(flag);
+    if (fromFlag != null) return fromFlag;
+
+    final context = _context;
+    if (context.assumeYes || !context.environment.environment.mayPrompt) {
+      return null;
+    }
+
+    final answer = context.logger.chooseOne<String>(
+      'Where will CI run?',
+      choices: const <String>[
+        _hostedChoice,
+        _selfHostedChoice,
+        _undecidedChoice,
+      ],
+      defaultValue: _hostedChoice,
+    );
+    return switch (answer) {
+      _hostedChoice => CiRunner.hosted,
+      _selfHostedChoice => CiRunner.selfHosted,
+      _ => null,
+    };
   }
 }

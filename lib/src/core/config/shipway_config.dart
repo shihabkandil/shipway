@@ -63,6 +63,20 @@ class ShipwayConfig {
 
   AppConfig? appOrNull(String? id) => apps[id ?? defaultAppId];
 
+  /// This config with [ci] in place of its own.
+  ///
+  /// The one block `init` decides by asking rather than by reading the
+  /// project, so it is the one block that needs replacing after the fact.
+  ShipwayConfig withCi(CiConfig ci) => ShipwayConfig(
+    version: version,
+    project: project,
+    apps: apps,
+    secrets: secrets,
+    notify: notify,
+    ci: ci,
+    pipelines: pipelines,
+  );
+
   Map<String, dynamic> toJson() => _$ShipwayConfigToJson(this);
 }
 
@@ -603,10 +617,46 @@ class SecretsConfig {
   Map<String, dynamic> toJson() => _$SecretsConfigToJson(this);
 }
 
+/// Whose machines the CI workflow runs on.
+///
+/// Decides the *shape of the generated workflow*, which is a different question
+/// from [CiConfig.environment]. That one tells a running shipway what kind of
+/// machine it is on, and applies to every machine that loads the config — set
+/// it to `persistent` and a laptop stops prompting. This one is read only by
+/// `shipway generate ci`, so a developer's machine is unaffected by it; the
+/// workflow it produces then tells the runner what it is with `--env`.
+enum CiRunner {
+  /// GitHub's own runners: a clean machine per job, thrown away afterwards.
+  hosted,
+
+  /// A machine the team keeps: nothing is clean, nothing is thrown away, and
+  /// anything a job installs or caches is there for the next one.
+  @JsonValue('self-hosted')
+  selfHosted;
+
+  /// As written in `shipway.yaml` and accepted by `shipway init --runner`.
+  String get id => switch (this) {
+    CiRunner.hosted => 'hosted',
+    CiRunner.selfHosted => 'self-hosted',
+  };
+
+  static CiRunner? parse(String? value) {
+    final wanted = value?.trim().toLowerCase();
+    for (final runner in CiRunner.values) {
+      if (runner.id == wanted) return runner;
+    }
+    return null;
+  }
+
+  static List<String> get ids => <String>[
+    for (final runner in CiRunner.values) runner.id,
+  ];
+}
+
 /// How this project is built when it is not being built on a laptop.
 @JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
 class CiConfig {
-  const CiConfig({this.environment});
+  const CiConfig({this.environment, this.runner});
 
   factory CiConfig.fromJson(Map<dynamic, dynamic> json) =>
       _$CiConfigFromJson(json);
@@ -618,6 +668,19 @@ class CiConfig {
   /// inside. Overridden by `--env` and `SHIPWAY_ENV`, and left unset by
   /// `import`, which has no way to know.
   final String? environment;
+
+  /// `hosted` or `self-hosted`: which workflow `shipway generate ci` writes.
+  ///
+  /// Null when nobody has said, which generates for hosted runners — the shape
+  /// that needs nothing installed beforehand. `shipway init` asks.
+  final CiRunner? runner;
+
+  /// The runner the workflow is generated for.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  CiRunner get effectiveRunner => runner ?? CiRunner.hosted;
+
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  bool get isEmpty => environment == null && runner == null;
 
   Map<String, dynamic> toJson() => _$CiConfigToJson(this);
 }
