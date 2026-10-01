@@ -62,6 +62,7 @@ class DoctorCommand extends Command<int> {
         config: await _configOrNull(),
         now: _context.now,
         host: _context.host,
+        environment: _context.processEnvironment,
       ),
     );
 

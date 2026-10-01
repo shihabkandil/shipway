@@ -6,6 +6,7 @@ import 'package:mason_logger/mason_logger.dart';
 import 'package:path/path.dart' as p;
 
 import '../../core/config/shipway_config.dart';
+import '../../core/env/run_environment.dart';
 import '../../core/errors/classifier.dart';
 import '../../core/fastlane/fastfile_lanes.dart';
 import '../../core/fastlane/release_target.dart';
@@ -16,6 +17,7 @@ import '../../core/toolchain/bundled_fastlane.dart';
 import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../core/toolchain/fastlane_pins.dart';
 import '../../core/toolchain/pod_repo_update.dart';
+import '../../core/toolchain/toolchain_versions.dart';
 import '../../generators/generated_file.dart';
 import '../../generators/generator_registry.dart';
 import '../../platform/android/firebase_access.dart';
@@ -77,6 +79,13 @@ class ReleaseCommand extends Command<int> {
         help:
             "Analyse the flavor's entrypoint before building, so a compile "
             'error fails in seconds.',
+      )
+      ..addFlag(
+        'match-check',
+        defaultsTo: true,
+        help:
+            'iOS only: ask the match repository whether the credentials '
+            'this environment has can read it before building. Read-only.',
       )
       ..addFlag(
         'access-check',
@@ -189,6 +198,20 @@ class ReleaseCommand extends Command<int> {
     }
 
     final credentials = await _credentials(config, target, flavor);
+
+    // Before the missing-credential report, so a credential of the wrong kind
+    // for the match URL is named as that. The remote is only asked once
+    // nothing else is missing.
+    if (platform == 'ios' && results['match-check'] as bool) {
+      final refused = await checkMatchAccess(
+        context,
+        app,
+        flavor: flavor.name,
+        probe: credentials.missing.isEmpty,
+      );
+      if (refused != null) return refused;
+    }
+
     if (credentials.missing.isNotEmpty) {
       final missing = credentials.missing;
       logger.err(
@@ -340,6 +363,20 @@ class ReleaseCommand extends Command<int> {
       exitCode: code,
     );
     await notifier?.finish(succeeded: code == ShipwayExit.success);
+
+    // Only from a workstation: the lock file is committed, and a runner that
+    // rewrote it would leave a dirty checkout for whatever step comes next.
+    if (code == ShipwayExit.success &&
+        context.environment.environment == RunEnvironment.workstation) {
+      final recorded = await ToolchainRecord.afterRelease(
+        context.runner,
+        root: context.projectRoot,
+        ios: platform == 'ios',
+      );
+      if (recorded != null) {
+        logger.detail('Recorded this toolchain in .shipway/lock.json.');
+      }
+    }
     return code;
   }
 
