@@ -27,6 +27,7 @@ import '../exit_codes.dart';
 import '../failure_reporter.dart';
 import '../notifications.dart';
 import '../preflight.dart';
+import '../release_preparation.dart';
 import '../run_context.dart';
 
 /// `shipway release ios|android --flavor <f> --target <t>`.
@@ -117,6 +118,17 @@ class ReleaseCommand extends Command<int> {
 
   @override
   Future<int> run() async {
+    // Wrapped rather than inlined: the release has a dozen ways to return
+    // early, and whatever was written for it has to be removed after each.
+    final preparation = ReleasePreparation(_context);
+    try {
+      return await _release(preparation);
+    } finally {
+      await preparation.cleanUp();
+    }
+  }
+
+  Future<int> _release(ReleasePreparation preparation) async {
     final results = argResults!;
     final context = _context;
     final logger = context.logger;
@@ -249,6 +261,17 @@ class ReleaseCommand extends Command<int> {
         logger.detail('Did not analyse ${flavor.entrypoint}: $skipped');
       }
     }
+
+    // Off the workstation: gems installed, credential files written for the
+    // run, Gradle sized to the machine. Before the probe, which needs the
+    // bundle, and before the Firebase check, which needs the account file.
+    final unprepared = await preparation.prepare(
+      config: config,
+      target: target,
+      flavor: flavor.name,
+      environment: credentials.environment,
+    );
+    if (unprepared != null) return unprepared;
 
     // Asked before the plan and before anything slow. The bundle a lane runs
     // in is where "works on my machine" lives: printing it makes a failure

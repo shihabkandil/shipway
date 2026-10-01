@@ -172,11 +172,128 @@ wiring up a repository is mechanical rather than archaeological.
 
 ### `shipway generate ci`
 
-A working `.github/workflows/release.yml` that calls the same lanes, with the
-`env:` block generated from the config's `*_ref` fields, and fastlane invoked
-through a binstub rather than `bundle exec` — because a Homebrew fastlane on a
-self-hosted runner overrides `GEM_HOME` and silently uses the wrong gems, which
-Phase 2 already ran into.
+A working `.github/workflows/release.yml` with the `env:` block generated from
+the config's `*_ref` fields. Each job runs `shipway release`, not fastlane, so
+the pre-flight, the failure summary and everything under "What `shipway
+release` does on a build machine" below apply in CI as they do locally — and
+fastlane is still loaded through the bundle rather than found on `PATH`,
+because a Homebrew fastlane on a self-hosted runner overrides `GEM_HOME` and
+silently uses the wrong gems, which Phase 2 already ran into.
+
+`ci.runner` in `shipway.yaml` picks one of two shapes:
+
+| | `hosted` (default) | `self-hosted` |
+|---|---|---|
+| `runs-on` | `macos-15`, `ubuntu-latest` | `[self-hosted, macOS]`, `[self-hosted]` — edit to your labels |
+| Toolchain | `flutter-action`, `setup-ruby` (Ruby 3.3), `setup-java` | none: the machine has its own |
+| Caches | `cache: true`, `bundler-cache: true` | none |
+| Gems | installed by `bundler-cache` | `shipway release` runs `bundle install` when `bundle check` fails |
+| Tells shipway | `--env ci` | `--env persistent` |
+| `known_hosts` for an SSH match repo | appended by a step | trusted once, by hand, on the runner |
+| Last step | — | `shipway cleanup`, under `if: always()` |
+
+Both have `ios` and `android` boolean inputs, on by default, each gating its
+job — so an Android fix does not cost an iOS build. Both check credentials per
+platform (`shipway secrets check --platform ios`), so a job is not failed for a
+secret only the other one needs.
+
+The hosted assumptions are each harmless on a machine that is destroyed and a
+leftover on one that is not: a tool cache that fills the disk, an
+`ios/.bundle/config` pointing every later `bundle` at `vendor/bundle`, a
+`known_hosts` that grows by a line per job. A team that moved the hosted
+workflow to a self-hosted Mac undid them by hand, one failed run at a time.
+That is what the second shape is for.
+
+`ci.runner` is deliberately not `ci.environment`. The latter is read by every
+machine that loads the config, a laptop included; the former only chooses a
+workflow, and the workflow then passes `--env`.
+
+### What `shipway release` does on a build machine
+
+Off the workstation — `ci` and `persistent` alike, so the persistent path is
+exercised by every hosted run — `shipway release` does what the workflow used
+to do in YAML, and undoes it:
+
+1. **Credential files.** A service account and a keystore are files on a
+   laptop and repository secrets on a runner. Each path-valued variable the
+   release needs (`PLAY_SERVICE_ACCOUNT_JSON_PATH`, a flavor's Firebase
+   account) is written from the secret holding its content
+   (`PLAY_SERVICE_ACCOUNT_JSON`) into a directory made for the run, and the
+   lane is pointed at it. For Android the keystore is decoded from
+   `keystore_ref` and `android/key.properties` is built from the two password
+   variables. The directory is under `RUNNER_TEMP` when the runner provides
+   one, otherwise the system's temporary directory — never the checkout.
+2. **Gems.** `bundle check` in the platform directory, then `bundle install`
+   only when that fails.
+3. **Gradle** (Android). See below.
+4. **Removal.** Everything from step 1 is deleted when the command returns,
+   whichever way it returns, and on `SIGINT`/`SIGTERM`, which is what a job
+   cancelled from the GitHub UI receives.
+
+Three things are left alone on purpose. A path variable that already names a
+real file is not shadowed: a self-hosted machine may keep its service account
+on disk. A `key.properties` that shipway did not write is never replaced or
+removed: the one it writes begins with a marker line, and that is how the two
+are told apart. And nothing is done on a workstation at all.
+
+`shipway cleanup` removes the same files for a run that was killed too hard to
+do it itself. It removes only run directories named for this checkout and a
+`key.properties` carrying the marker, so two runners sharing a machine cannot
+clean up each other's releases, and it succeeds when there is nothing to do.
+
+`shipway secrets check` agrees with all this: off the workstation a path-valued
+requirement is satisfied by its content secret, since that is what will be
+turned into the file.
+
+### Gradle limits
+
+A project's `gradle.properties` commonly asks for an 8 GB heap — a number
+chosen on a laptop. On a 16 GB runner the operating system kills the build and
+the only report is exit 143. Off the workstation, an Android release sets
+`GRADLE_OPTS` in the lane's environment:
+
+```
+-Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8"
+-Dorg.gradle.workers.max=4
+-Dorg.gradle.daemon=false
+```
+
+| Machine | Heap | Workers |
+|---|---|---|
+| unknown | 2 GB | 2 |
+| 4–8 GB | 2 GB | 1–2 |
+| 16 GB | 4 GB | 4 |
+| 32 GB or more | 8 GB | 4 |
+
+The heap is a quarter of physical memory, in whole gigabytes, between 2 and 8;
+workers are one per 4 GB, at most four. Memory is read with
+`sysctl -n hw.memsize` on macOS and from `/proc/meminfo` on Linux.
+
+Nothing is written to `~/.gradle`. On a self-hosted runner that directory is
+every project's, and a heap chosen for this one would become everybody's.
+Whatever `GRADLE_OPTS` already holds is kept and placed last, so a value set on
+the runner deliberately still wins.
+
+**Verified** on this machine against Gradle 8.14 (JDK 18), with a project whose
+`gradle.properties` asks for `-Xmx8G -XX:MaxMetaspaceSize=4G` and
+`org.gradle.daemon=true`:
+
+- The string above produced a build JVM reporting a 4096 MB heap, a 1024 MB
+  metaspace and 4 workers, in a single-use process that exited with the build.
+  So a `-D` property in `GRADLE_OPTS` outranks the project's `gradle.properties`
+  for `org.gradle.jvmargs`, `org.gradle.workers.max` and `org.gradle.daemon`.
+- A bare `-Xmx2g` in `GRADLE_OPTS` did **not**: the build JVM still had 8192 MB.
+  It sizes the small client JVM only, which is why the limit has to go through
+  `org.gradle.jvmargs`.
+- With `-Dorg.gradle.workers.max` given twice, the later one was used.
+
+**Not verified:** the same variable arriving through `flutter build` and a
+project's own `gradlew` rather than the distribution's launcher script; older
+wrapper scripts, which parse the quotes differently; the Kotlin daemon, which
+inherits Gradle's arguments unless `kotlin.daemon.jvmargs` says otherwise; and
+whether these sizes are enough for any particular app. `org.gradle.jvmargs`
+replaces the project's value rather than adding to it, so other flags the
+project put there are not passed.
 
 ### `shipway doctor --env <name>`
 
@@ -206,13 +323,15 @@ the environments make likely:
 |---|---|
 | **Workstation** | Supported. Login keychain, prompts allowed, nothing created. |
 | **Ephemeral CI** (GitHub-hosted) | Supported. Generated workflow, pre-flight, keychain session. |
-| **Persistent runner** | **Not yet.** Detection classifies it correctly and it shares the ephemeral code path, but nothing here has been validated against a real self-hosted machine and shipway does not claim to support one. |
+| **Persistent runner** | **Built, not proven.** `ci.runner: self-hosted` generates a workflow with no setup actions and no caches; `shipway release` installs gems, writes and removes credential files and limits Gradle; `shipway cleanup` covers a killed run. All of it is unit-tested and none of it has run on a real self-hosted machine. |
 | **Linux VPS** | Android only, and it says so. Every Apple check skips with a reason rather than failing, `shipway build ios` refuses and names `build android`, the keychain is not offered as a place a secret could be, and `doctor` reports "Ready to ship Android" rather than implying more. Not validated against a real Linux builder end to end. |
 
 Detection still resolves `persistentRunner` — misclassifying a self-hosted
-runner as disposable would be worse than naming it — but the work that makes
-that case *good* (guaranteed teardown proven against a cancelled job, the run
-lock exercised under real concurrency) is deliberately deferred.
+runner as disposable would be worse than naming it. What remains before that
+row can say "supported" is evidence rather than code: teardown observed against
+a job cancelled from the GitHub UI, the Gradle limits observed through
+`flutter build` on a runner that was previously killed, and the run lock
+exercised under real concurrency.
 
 ## Order of work
 

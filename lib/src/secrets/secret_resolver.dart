@@ -6,6 +6,7 @@ import '../core/env/host_platform.dart';
 import '../core/env/run_environment.dart';
 import '../core/io/process_runner.dart';
 import '../core/io/redactor.dart';
+import '../core/secrets/secret_names.dart';
 import 'secret_requirements.dart';
 
 /// Where a value was found.
@@ -136,6 +137,8 @@ class SecretResolver {
       if (found == null) continue;
 
       if (requirement.isPath && !_fileExists(found)) {
+        final supplied = await _suppliedAsContent(requirement);
+        if (supplied != null) return supplied;
         return SecretStatus(
           requirement: requirement,
           source: SecretSource.missingFile,
@@ -151,6 +154,9 @@ class SecretResolver {
       );
     }
 
+    final supplied = await _suppliedAsContent(requirement);
+    if (supplied != null) return supplied;
+
     return SecretStatus(
       requirement: requirement,
       source: SecretSource.absent,
@@ -158,6 +164,29 @@ class SecretResolver {
           ? null
           : 'not set, and this environment cannot prompt',
     );
+  }
+
+  /// A path-valued [requirement] met by the secret holding the file's
+  /// *content*, which is how a runner is given one.
+  ///
+  /// Off the workstation only. There `shipway release` writes the file for the
+  /// run and points the variable at it, so the content being set is the
+  /// variable being satisfiable — and a pre-flight that demanded the path
+  /// would fail every job before the step that creates it.
+  Future<SecretStatus?> _suppliedAsContent(
+    SecretRequirement requirement,
+  ) async {
+    if (!requirement.isPath || !environment.requiresCleanup) return null;
+    final content = SecretNames.contentSecretFor(requirement.name);
+    for (final source in chain) {
+      if (await _read(content, source) == null) continue;
+      return SecretStatus(
+        requirement: requirement,
+        source: source,
+        detail: '$content, written to a file for the run',
+      );
+    }
+    return null;
   }
 
   Future<List<SecretStatus>> statuses(

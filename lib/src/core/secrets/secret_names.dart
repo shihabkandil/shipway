@@ -74,6 +74,16 @@ abstract final class SecretNames {
     _ => '${pathVariable}_CONTENT',
   };
 
+  /// The keystore passwords, when `signing.android.key_properties` names no
+  /// variables of its own.
+  ///
+  /// Not in [all]: a config that names its own never reads these, so they are
+  /// a fallback rather than something every project has. Shared because the
+  /// workflow that passes them and the code that builds `key.properties` from
+  /// them have to mean the same two names.
+  static const String androidStorePasswordDefault = 'ANDROID_STORE_PASSWORD';
+  static const String androidKeyPasswordDefault = 'ANDROID_KEY_PASSWORD';
+
   /// Password for the dedicated keychain shipway creates off-workstation.
   static const String keychainPassword = 'SHIPWAY_KEYCHAIN_PASSWORD';
 

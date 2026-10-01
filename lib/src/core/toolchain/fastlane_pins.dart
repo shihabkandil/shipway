@@ -23,6 +23,17 @@ abstract final class FastlanePins {
   /// answer to "your Ruby is getting old" than a warning.
   static const String rubyFloor = '3.0';
 
+  /// The Ruby a generated workflow installs on a hosted runner.
+  /// Last verified 2026-10-01.
+  ///
+  /// Deliberately not [rubyFloor]. The floor is the oldest Ruby the pinned
+  /// gems install on, and it is what the generated Gemfile admits, so that a
+  /// developer on an older Ruby is warned rather than locked out. A runner has
+  /// no such history: it installs whatever it is told, so it is told one
+  /// fastlane still supports, and the end-of-support warning fastlane prints
+  /// below 3.3 never reaches a release log.
+  static const String ciRuby = '3.3';
+
   /// A ceiling on `google-apis-core`, written into the generated Gemfile.
   /// Last verified 2026-09-14.
   ///

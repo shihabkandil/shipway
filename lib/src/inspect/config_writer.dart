@@ -79,6 +79,21 @@ abstract final class ConfigWriter {
       }
     }
 
+    // Only what somebody decided. `import` cannot know either answer, so an
+    // imported config carries no `ci` block rather than two guesses.
+    final ci = config.ci;
+    if (!ci.isEmpty) {
+      out
+        ..writeln()
+        ..writeln('ci:');
+      if (ci.runner case final runner?) {
+        out.writeln('  runner: ${runner.id}');
+      }
+      if (ci.environment case final environment?) {
+        out.writeln('  environment: ${_scalar(environment)}');
+      }
+    }
+
     return out.toString();
   }
 

@@ -182,7 +182,11 @@ class ResolvedApp {
     this.shipsIos = true,
     this.versioning = const VersioningConfig(),
     this.appstore,
+    this.ciRunner = CiRunner.hosted,
   });
+
+  /// Whose machines the CI workflow is written for. `ci.runner` in the config.
+  final CiRunner ciRunner;
 
   final String appId;
   final String projectName;

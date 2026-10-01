@@ -45,6 +45,7 @@ abstract final class ResolveApp {
       versioning: app.versioning,
       appstore: app.targets.appstore,
       shipsIos: app.shipsIos,
+      ciRunner: config.ci.effectiveRunner,
       flavors: <ResolvedFlavor>[
         for (final entry in app.flavors.entries)
           _flavor(entry.key, entry.value, androidBase, iosBase),
