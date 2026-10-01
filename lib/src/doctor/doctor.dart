@@ -1,7 +1,9 @@
 import '../core/env/host_platform.dart';
 import 'check.dart';
+import 'checks/android_sdk_checks.dart';
 import 'checks/fastlane_checks.dart';
 import 'checks/project_checks.dart';
+import 'checks/toolchain_checks.dart';
 import 'checks/tool_checks.dart';
 import 'platform_deadlines.dart';
 import 'tool_version.dart';
@@ -79,6 +81,7 @@ class Doctor {
   /// then optional extras.
   static List<Check> defaultChecks() => <Check>[
     FlutterCheck(),
+    ToolchainDriftCheck(),
     VersionCheck(
       id: 'dart',
       title: 'Dart',
@@ -158,6 +161,7 @@ class Doctor {
     GradleDslCheck(),
     GradleWrapperCheck(),
     PlayTargetSdkCheck(),
+    CompileSdkCheck(),
     FirebaseToolingCheck(executable: 'firebase', name: 'Firebase CLI'),
     FirebaseToolingCheck(executable: 'flutterfire', name: 'flutterfire'),
     KeychainCheck(),

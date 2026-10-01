@@ -80,7 +80,9 @@ class DoctorContext {
     required this.config,
     required this.now,
     HostPlatform? host,
-  }) : host = host ?? HostPlatform.current;
+    Map<String, String>? environment,
+  }) : host = host ?? HostPlatform.current,
+       environment = environment ?? Platform.environment;
 
   final ProcessRunner runner;
 
@@ -97,6 +99,11 @@ class DoctorContext {
   /// The machine this is running on. Injected so the Linux answer can be
   /// tested from a Mac, which is the only place it will be.
   final HostPlatform host;
+
+  /// The variables this process was started with. Injected because where the
+  /// Android SDK lives is read from them, and a test must not find the one on
+  /// the machine running it.
+  final Map<String, String> environment;
 
   bool get hasProject =>
       File('$projectRoot/pubspec.yaml').existsSync() &&

@@ -117,6 +117,12 @@ class LockEntry {
       );
 }
 
+/// The Flutter and Xcode a release was last built with.
+///
+/// Either may be null: an Android release says nothing about Xcode, and a
+/// machine that could not be asked records nothing rather than a guess.
+typedef LockedToolchain = ({String? flutter, String? xcode});
+
 /// `.shipway/lock.json` — the record of what shipway may write.
 ///
 /// Committed to version control on purpose: ownership is a team-wide fact, and
@@ -126,17 +132,82 @@ class LockFile {
     required this.version,
     required this.generatedBy,
     Map<String, LockEntry>? files,
-  }) : _files = files ?? <String, LockEntry>{};
+    Map<String, dynamic>? toolchain,
+    Map<String, dynamic>? unrecognised,
+  }) : _files = files ?? <String, LockEntry>{},
+       _toolchain = toolchain ?? <String, dynamic>{},
+       _unrecognised = unrecognised ?? <String, dynamic>{};
 
   /// Schema version of the lockfile itself.
+  ///
+  /// Still 1 with the `toolchain` section added: the key is optional, a file
+  /// without it loads as before, and a reader that predates it ignores it. A
+  /// bump would only make older shipways distrust a file they read correctly.
   static const int currentVersion = 1;
 
   static const String directoryName = '.shipway';
   static const String fileName = 'lock.json';
 
+  static const String _toolchainKey = 'toolchain';
+  static const String _flutterKey = 'flutter';
+  static const String _xcodeKey = 'xcode';
+
+  /// The top-level keys this version reads. Anything else is carried through
+  /// untouched.
+  static const Set<String> _knownKeys = <String>{
+    'version',
+    'generatedBy',
+    'files',
+    _toolchainKey,
+  };
+
   final int version;
   final String generatedBy;
   final Map<String, LockEntry> _files;
+
+  /// Kept as the raw map so a key a newer shipway adds beside `flutter` and
+  /// `xcode` survives a save by this one.
+  final Map<String, dynamic> _toolchain;
+
+  /// Top-level keys this version does not know.
+  ///
+  /// The file is committed and shared, so the shipway that saves it is not
+  /// always the newest one that wrote it. Dropping what it does not understand
+  /// would quietly undo a teammate's newer version on every save.
+  final Map<String, dynamic> _unrecognised;
+
+  /// The toolchain the last successful release was built with, or null when
+  /// none has been recorded.
+  LockedToolchain? get toolchain {
+    final flutter = _toolchain[_flutterKey];
+    final xcode = _toolchain[_xcodeKey];
+    final LockedToolchain record = (
+      flutter: flutter is String && flutter.isNotEmpty ? flutter : null,
+      xcode: xcode is String && xcode.isNotEmpty ? xcode : null,
+    );
+    return record.flutter == null && record.xcode == null ? null : record;
+  }
+
+  /// Records the versions a release was just built with, and says whether
+  /// anything changed.
+  ///
+  /// A null argument leaves that entry alone rather than clearing it: an
+  /// Android release says nothing about Xcode, and must not erase what the
+  /// last iOS release recorded. The answer lets a caller skip the save, since
+  /// rewriting a committed file that has not changed is a diff nobody asked
+  /// for.
+  bool recordToolchain({String? flutter, String? xcode}) {
+    var changed = false;
+    void put(String key, String? value) {
+      if (value == null || value.isEmpty || _toolchain[key] == value) return;
+      _toolchain[key] = value;
+      changed = true;
+    }
+
+    put(_flutterKey, flutter);
+    put(_xcodeKey, xcode);
+    return changed;
+  }
 
   Map<String, LockEntry> get files =>
       Map<String, LockEntry>.unmodifiable(_files);
@@ -182,9 +253,16 @@ class LockFile {
   Map<String, dynamic> toJson() => <String, dynamic>{
     'version': version,
     'generatedBy': generatedBy,
+    if (_toolchain.isNotEmpty)
+      _toolchainKey: <String, dynamic>{
+        for (final key in _toolchain.keys.toList()..sort())
+          key: _toolchain[key],
+      },
     'files': <String, dynamic>{
       for (final key in _sortedKeys()) key: _files[key]!.toJson(),
     },
+    for (final key in _unrecognised.keys.toList()..sort())
+      key: _unrecognised[key],
   };
 
   /// Sorted so the committed file produces stable, reviewable diffs.
@@ -205,10 +283,21 @@ class LockFile {
         }
       }
     }
+    final rawToolchain = json[_toolchainKey];
     return LockFile(
       version: (json['version'] as num?)?.toInt() ?? currentVersion,
       generatedBy: json['generatedBy'] as String? ?? 'unknown',
       files: files,
+      toolchain: rawToolchain is Map
+          ? <String, dynamic>{
+              for (final entry in rawToolchain.entries)
+                entry.key.toString(): entry.value,
+            }
+          : null,
+      unrecognised: <String, dynamic>{
+        for (final entry in json.entries)
+          if (!_knownKeys.contains(entry.key)) entry.key: entry.value,
+      },
     );
   }
 
