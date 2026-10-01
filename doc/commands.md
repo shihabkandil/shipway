@@ -115,13 +115,28 @@ Two checks are worth knowing about because their symptoms are misleading:
   Firebase plugin, which crashed uploads partway through. It fails when
   `targets.firebase` is configured and warns otherwise. See
   [`troubleshooting.md`](troubleshooting.md).
+- `compile_sdk` reads `compileSdk` from `android/app/build.gradle(.kts)`, the
+  Android Gradle Plugin version from `android/settings.gradle(.kts)` or the
+  older `build.gradle` classpath, and the platforms installed in the Android
+  SDK. It fails when the plugin is too old to find the platform — `compileSdk
+  37` needs AGP 9 or newer, and an older one fails minutes into Gradle with
+  `Failed to find target with hash string 'android-37'` although the platform
+  is installed. It warns when the plugin is below the documented minimum or
+  the platform is not installed, naming the `sdkmanager` command, and is
+  skipped when `compileSdk` is `flutter.compileSdkVersion`, which is only
+  known once Gradle runs.
+- `toolchain_drift` compares this machine's Flutter and Xcode with the versions
+  the last successful `shipway release` recorded in `.shipway/lock.json`, and
+  warns, naming both, when they differ. The record is written from a
+  workstation release only, never on `--dry-run`, and only when a version
+  changed, so a runner never dirties its checkout.
 
 ## `shipway init`
 
 > Set up shipway in this project.
 
 ```
-shipway init [--force]
+shipway init [--force] [--runner hosted|self-hosted]
 ```
 
 The front door. Looks at the project, then writes a `shipway.yaml` describing
@@ -130,6 +145,11 @@ what is already there. **No project file is modified.**
 | Option | Meaning |
 |---|---|
 | `--force` | Overwrite an existing `shipway.yaml`. |
+| `--runner <kind>` | Where CI will run: `hosted` or `self-hosted`. Written as `ci.runner`. |
+
+Where it may ask a question, `init` asks where CI will run. The answer is
+stored as `ci.runner` and decides which workflow `shipway generate ci` writes;
+see [Continuous integration](#continuous-integration).
 
 ## `shipway import`
 
@@ -857,6 +877,7 @@ runs the same generated lane you could run by hand.
 | `--no-notify` | Post nothing to Slack for this release. |
 | `--no-analyze` | Skip analysing the flavor's entrypoint before building. |
 | `--no-access-check` | Firebase only: skip asking App Distribution whether the service account can reach the app. |
+| `--no-match-check` | iOS only: skip asking the match repository whether this environment's credentials can read it. |
 
 Everything cheap happens first. A target the config never configured, a flag
 belonging to another target, a rollout out of range, a credential that is not
@@ -886,9 +907,36 @@ Ruby and which fastlane it ran on.
 
 The lane's own output then streams as it runs, each line marked with its
 platform (`android │ …`), so a long build does not look like a hang and the two
-lanes of a parallel pipeline stay readable. When it fails, shipway names the
-lane and its exit code and says what the output meant, without printing it a
-second time.
+lanes of a parallel pipeline stay readable.
+
+**A failure is attributed to the step that failed.** fastlane marks each step
+it starts, so shipway reads only the failing step's output and its `[!]` line,
+not the whole log. The summary is the failed step, fastlane's error line, then
+the fix. A failure shipway does not recognise is reported as that, with the
+last 20 lines of the failing step, rather than guessed at. Warnings found
+elsewhere in the output — fastlane's Ruby end-of-support notice, for one — are
+listed after the cause under their own heading, and are not the cause.
+
+**A stale CocoaPods specs repository is repaired, once.** A machine that keeps
+`~/.cocoapods` between runs falls behind `Podfile.lock`. When the lane fails
+for that reason, shipway says so, runs `pod install --repo-update` in `ios/`
+(through the bundle when the Gemfile has CocoaPods) and runs the lane once
+more.
+
+**An iOS release checks the match repository first.** A read-only
+`git ls-remote` against `MATCH_GIT_URL` or `signing.ios.match_git_url`, with
+`MATCH_GIT_PRIVATE_KEY` for an SSH URL or `MATCH_GIT_BASIC_AUTHORIZATION` for
+an HTTPS one. The release stops when the only credential set is for the other
+kind of URL, or the remote refuses it; it warns and continues when the host
+cannot be reached.
+
+**On a build machine, shipway prepares and cleans up.** With `--env ci` or
+`--env persistent`, `shipway release` runs `bundle install` when the bundle is
+not satisfied, writes service-account files, the keystore and `key.properties`
+from their content secrets for the length of the run, and removes them however
+the run ends. An Android release also limits Gradle through `GRADLE_OPTS`,
+sized from the machine's memory; nothing is written to `~/.gradle`. See
+[`execution-environments.md`](execution-environments.md).
 
 **fastlane runs from the project's bundle.** shipway runs
 `bundle exec ruby -e 'load Gem.bin_path("fastlane", "fastlane")' -- <lane>` in
@@ -950,6 +998,20 @@ cd android && bundle exec fastlane android promote flavor:prod to:beta rollout:0
 You do not pass a release status alongside a rollout: `supply` derives one from
 the fraction — `inProgress` below 1, `completed` at 1 — and passing both only
 lets them disagree.
+
+## `shipway cleanup`
+
+> Remove credential files a killed release left behind.
+
+```
+shipway cleanup
+```
+
+`shipway release` removes what it wrote when it ends, including on failure and
+cancellation. This is for the ending it cannot handle: the process killed
+outright. It removes only run directories named for this checkout and a
+`key.properties` shipway itself wrote, and always exits 0, so it is safe as an
+`if: always()` step. The self-hosted workflow ends each job with it.
 
 ## `shipway run`
 
@@ -1046,23 +1108,39 @@ See [`config-schema.md`](config-schema.md#notify--telling-a-channel-how-a-releas
 ## Continuous integration
 
 `shipway generate ci` writes `.github/workflows/release.yml` — created once,
-then yours. It calls the same lanes you run locally, so green there and green
-here mean the same thing.
+then yours. It runs `shipway release`, the same command you run locally, so
+green there and green here mean the same thing, and the pre-flight and failure
+summary apply on the runner too.
 
-What it handles that a hand-written workflow usually forgets:
+`ci.runner` in `shipway.yaml` chooses the shape:
 
-- **Match repository access.** A runner has no SSH agent and no credential
-  helper, so a private certificates repo needs an explicit credential. shipway
-  picks `MATCH_GIT_PRIVATE_KEY` or `MATCH_GIT_BASIC_AUTHORIZATION` from the URL
-  scheme in your config — match treats them as mutually exclusive and silently
-  ignores the wrong one.
-- **The Android keystore.** A checkout has neither the keystore (binary,
-  git-ignored) nor `key.properties` (passwords). The workflow rebuilds both from
-  secrets, with an absolute `storeFile` because Gradle resolves it relative to
-  `android/app`.
-- **Path-valued service accounts.** Play and Firebase want a *file*, so the
-  workflow writes one before the lane runs.
-- **`secrets check` as the first step**, so a missing variable fails in seconds.
+- **`hosted`** (the default) — GitHub's runners. The workflow installs
+  Flutter, a JDK and Ruby 3.3 with the setup actions, and caches them.
+- **`self-hosted`** — a machine that keeps running. No setup actions and no
+  caches; the runner needs its toolchain installed already, which
+  `shipway doctor --env persistent` checks. Each job ends with
+  `shipway cleanup`. The `runs-on` labels are a starting point to edit.
+
+What both handle that a hand-written workflow usually forgets:
+
+- **One platform at a time.** `ios` and `android` inputs, both on by default,
+  so an iOS-only failure is re-run without rebuilding Android.
+- **Credentials per job.** Each job runs `shipway secrets check --platform
+  <its platform>` first, so a missing variable fails in seconds and an iOS job
+  is never asked for an Android credential. `shipway secrets push` uploads the
+  secrets the `env:` blocks name.
+- **Files from secrets.** The keystore, `key.properties` and the Play and
+  Firebase service accounts are not written by workflow steps: the job passes
+  their content as secrets and `shipway release` writes and removes the files.
+- **Match repository access.** shipway picks `MATCH_GIT_PRIVATE_KEY` or
+  `MATCH_GIT_BASIC_AUTHORIZATION` from the URL scheme in your config — match
+  treats them as mutually exclusive and silently ignores the wrong one — and
+  `shipway release` checks the pair works before building.
+- **The toolchain you released with.** Once a release has recorded its Flutter
+  and Xcode versions in `.shipway/lock.json`, a newly generated hosted workflow
+  installs that Flutter and selects that Xcode through `DEVELOPER_DIR`. A
+  self-hosted one names both in comments, since where they live on your
+  machine is not knowable from here.
 - **Installing shipway itself**, pinned to the tag matching the version that
   generated the workflow. A job that installs whatever the default branch holds
   can break on a morning nobody touched the repository, and the failure arrives
@@ -1074,8 +1152,7 @@ A test asserts the workflow provides everything the pre-flight requires — a
 workflow whose own check step fails is worse than none, since it looks
 configured and refuses to run.
 
-Supported CI target is **GitHub-hosted runners**. Self-hosted runners are
-detected correctly but not yet supported; see
+The self-hosted shape has not yet been run on a real runner; see
 [`execution-environments.md`](execution-environments.md).
 
 ## Not built yet

@@ -85,9 +85,16 @@ class GenerateCommand extends Command<int> {
       appId: context.appId,
     );
 
-    // The one place toolchain versions reach the workflow. Nothing records
-    // them yet, so nothing is pinned; whoever does passes them here.
-    const pins = WorkflowPins();
+    final lock = await context.loadLockFile();
+
+    // The one place toolchain versions reach the workflow: what the last
+    // successful release recorded. A project that has not released through
+    // shipway yet has no record, and nothing is pinned.
+    final toolchain = lock.toolchain;
+    final pins = WorkflowPins(
+      flutterVersion: toolchain?.flutter,
+      xcodeVersion: toolchain?.xcode,
+    );
     final files = <GeneratedFile>[
       for (final generator in generators)
         ...(generator is WorkflowGenerator
@@ -103,7 +110,6 @@ class GenerateCommand extends Command<int> {
       return ShipwayExit.success;
     }
 
-    final lock = await context.loadLockFile();
     final writer = GeneratedFileWriter(
       root: context.projectRoot,
       lock: lock,

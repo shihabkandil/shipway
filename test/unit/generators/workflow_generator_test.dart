@@ -613,17 +613,27 @@ void main() {
 
     test('Xcode is selected for the job, not for the machine', () {
       // `xcode-select` would change it for every job after this one.
-      for (final resolved in <ResolvedApp>[app(), selfHosted()]) {
-        final rendered = render(resolved, pins: pins);
-        final ios =
-            ((loadYaml(rendered) as YamlMap)['jobs'] as YamlMap)['ios']
-                as YamlMap;
-        expect(
-          (ios['env'] as YamlMap)['DEVELOPER_DIR'],
-          '/Applications/Xcode_16.2.app/Contents/Developer',
-        );
-        expect(rendered, isNot(contains('xcode-select')));
-      }
+      final rendered = render(app(), pins: pins);
+      final ios =
+          ((loadYaml(rendered) as YamlMap)['jobs'] as YamlMap)['ios']
+              as YamlMap;
+      expect(
+        (ios['env'] as YamlMap)['DEVELOPER_DIR'],
+        '/Applications/Xcode_16.2.app/Contents/Developer',
+      );
+      expect(rendered, isNot(contains('xcode-select')));
+    });
+
+    test('a self-hosted runner is told the Xcode, and keeps its own', () {
+      // Where Xcode lives on that machine is unknown; a wrong path would
+      // fail every build.
+      final rendered = render(selfHosted(), pins: pins);
+      final ios =
+          ((loadYaml(rendered) as YamlMap)['jobs'] as YamlMap)['ios']
+              as YamlMap;
+      expect((ios['env'] as YamlMap).containsKey('DEVELOPER_DIR'), isFalse);
+      expect(rendered, contains('last released with Xcode 16.2'));
+      expect(rendered, isNot(contains('xcode-select')));
     });
 
     test('a self-hosted runner is told the Flutter, and installs nothing', () {

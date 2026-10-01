@@ -1,5 +1,80 @@
 # Changelog
 
+## Unreleased
+
+Fixes from a field report of moving a release workflow to a self-hosted Mac.
+
+Failures:
+
+- `shipway release` attributes a failed lane to the fastlane step that failed
+  and diagnoses only that step's output. A failed `pod install` is no longer
+  reported as "App Store Connect refused the API key".
+- The failure summary is now: failed step, fastlane's error line, then the
+  fix. A failure shipway does not recognise is said to be that, with the last
+  20 lines of the failing step, instead of a guess.
+- Warnings such as fastlane's Ruby end-of-support notice are listed separately
+  after the cause, and no longer in red.
+- `shipway release` recovers from an out-of-date CocoaPods specs repository:
+  it runs `pod install --repo-update` in `ios/` and re-runs the lane once. New
+  diagnosis `ios.pods.specs_out_of_date`.
+- Lanes run with `FASTLANE_SKIP_UPDATE_CHECK=1`, so fastlane's update
+  changelog no longer buries the error.
+
+Self-hosted runners:
+
+- `ci.runner: hosted | self-hosted` chooses which release workflow
+  `shipway generate ci` writes. `shipway init` asks, or takes `--runner`. The
+  self-hosted workflow uses no setup actions and no caches, and ends each job
+  with `shipway cleanup`.
+- The generated workflow runs `shipway release` instead of calling fastlane,
+  so the pre-flight and failure summary apply in CI. It has `ios` and
+  `android` inputs to release one platform, checks credentials per platform,
+  and installs Ruby 3.3 on hosted runners.
+- Off the workstation, `shipway release` writes service-account files, the
+  keystore and `key.properties` from their content secrets for the length of
+  the run and removes them however it ends. The workflow no longer has
+  "Materialise" steps. It also runs `bundle install` when `bundle check`
+  fails.
+- Android releases on a build machine limit Gradle through `GRADLE_OPTS`
+  (heap a quarter of RAM between 2 and 8 GB, at most 4 workers, no daemon),
+  which fixes builds killed with exit 143. Nothing is written to `~/.gradle`.
+- New `shipway cleanup` removes credential files left by a release that was
+  killed.
+
+Pre-flight:
+
+- `shipway doctor` checks `compileSdk` against the Android Gradle Plugin and
+  the installed SDK platforms (`compile_sdk`): `compileSdk 37` with AGP below
+  9 fails in doctor rather than minutes into Gradle. It warns when the
+  platform is not installed, with the `sdkmanager` command.
+- `shipway release ios` asks the match repository whether the credentials the
+  environment has can read it before building, and names a mismatch such as an
+  HTTPS `match_git_url` with only `MATCH_GIT_PRIVATE_KEY` set.
+  `--no-match-check` skips it.
+- A successful `shipway release` from a workstation records its Flutter and
+  Xcode versions in `.shipway/lock.json`. `shipway doctor` warns when the
+  machine differs (`toolchain_drift`), and a newly generated workflow pins
+  them.
+- `.shipway/lock.json` keeps keys it does not recognise when saved.
+
+Secrets:
+
+- `shipway secrets push` uploads the secrets CI needs to the GitHub repository
+  through `gh`. It maps local names to repository names
+  (`FIREBASE_DEV_SERVICE_ACCOUNT_JSON_PATH` →
+  `FIREBASE_DEV_SERVICE_ACCOUNT_JSON`), encodes file-backed secrets as the
+  workflow expects, and passes every value on stdin. It prints its plan and
+  asks first; `--yes`, `--dry-run` and `--repo owner/name` are supported.
+- `shipway secrets check --verify` asks each service whether its credential is
+  still valid with one read-only request: App Store Connect API keys and
+  Firebase and Play service accounts. A network failure is reported as "could
+  not check" and does not fail the command.
+- `secrets list`, `check` and `push` take `--platform ios|android` and
+  `--target`, so an iOS job no longer fails for an Android credential it was
+  never given, and the reverse.
+- `shipway secrets check` on a runner accepts a content secret for a
+  path-valued variable.
+
 ## 0.1.0-beta.3
 
 - Added `example/README.md`, so pub.dev finds and shows the example. It

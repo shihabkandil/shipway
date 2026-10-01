@@ -303,6 +303,16 @@ ${steps.join('\n\n')}
   List<String> _xcodeEnv(ResolvedApp app) {
     final xcode = pins.xcodeVersion;
     if (xcode == null) return const <String>[];
+    if (_selfHosted(app)) {
+      // A comment, not a value: where Xcode lives on somebody's own machine
+      // is not knowable from here, and a `DEVELOPER_DIR` that points nowhere
+      // fails every build, which is worse than an unpinned one.
+      return <String>[
+        '# This project was last released with Xcode $xcode. To hold this',
+        '# runner to it, uncomment and point at that Xcode:',
+        '# DEVELOPER_DIR: /Applications/Xcode_$xcode.app/Contents/Developer',
+      ];
+    }
     return <String>[
       '# The Xcode this project was last built with. The path is how GitHub\'s',
       '# images name it; on your own machine it may differ.',
