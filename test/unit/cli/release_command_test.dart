@@ -420,10 +420,11 @@ PLAY_SERVICE_ACCOUNT_JSON_PATH=play.json
 
       expect(code, ShipwayExit.environmentError);
       expect(logger.output, contains('The play lane failed for dev (exit 1).'));
-      // Shown once, as it happened, not again after the failure.
+      // Shown as it happened, and quoted once in the summary: on a CI log
+      // the first is a long way above the line saying the lane failed.
       expect(
         logger.lines.where((line) => line.contains('Something went wrong')),
-        hasLength(1),
+        hasLength(2),
       );
     });
 

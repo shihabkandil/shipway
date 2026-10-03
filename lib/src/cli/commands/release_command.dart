@@ -15,12 +15,14 @@ import '../../core/io/process_runner.dart';
 import '../../core/toolchain/bundled_fastlane.dart';
 import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../core/toolchain/fastlane_pins.dart';
+import '../../core/toolchain/pod_repo_update.dart';
 import '../../generators/generated_file.dart';
 import '../../generators/generator_registry.dart';
 import '../../platform/android/firebase_access.dart';
 import '../../secrets/secret_requirements.dart';
 import '../../secrets/secret_resolver.dart';
 import '../exit_codes.dart';
+import '../failure_reporter.dart';
 import '../notifications.dart';
 import '../preflight.dart';
 import '../run_context.dart';
@@ -726,8 +728,13 @@ class ReleaseCommand extends Command<int> {
   /// Streamed because a release lane builds for minutes before it uploads,
   /// and output held back until the end is indistinguishable from a hang.
   /// Each line carries its platform, because a pipeline runs the iOS and
-  /// Android lanes at once into one terminal. The output is kept too, since
-  /// the classifier reads the whole of it.
+  /// Android lanes at once into one terminal. The output is kept too: the
+  /// classifier needs all of it to find the step that failed.
+  ///
+  /// One failure is repaired rather than reported: a CocoaPods spec repo
+  /// older than `Podfile.lock`. The spec repo is refreshed and the lane run
+  /// once more — once, because a second identical failure is not the spec
+  /// repo's fault.
   Future<int> _runLane(
     ReleaseTarget target,
     ResolvedFlavor flavor,
@@ -757,27 +764,59 @@ class ReleaseCommand extends Command<int> {
       ..detail('Running: bundle ${arguments.join(' ')}');
 
     final prefix = darkGray.wrap('${target.platform} │ ') ?? '';
-    final output = StringBuffer();
-    var exitCode = 0;
-    try {
-      await for (final line in context.runner.stream(
-        'bundle',
-        arguments,
+    Future<({int exitCode, String output})> lane() => streamShowing(
+      context.runner,
+      logger,
+      'bundle',
+      arguments,
+      workingDirectory: directory,
+      prefix: prefix,
+      environment: BundledFastlane.environment(environment),
+    );
+
+    var run = await lane();
+    if (run.exitCode != 0 &&
+        target.platform == 'ios' &&
+        ErrorClassifier.diagnose(
+          run.output,
+        ).hasCause(ErrorClassifier.podSpecsOutOfDate)) {
+      final pod = PodRepoUpdate.command(context.projectRoot);
+      final commandLine = <String>[pod.executable, ...pod.arguments].join(' ');
+      logger
+        ..info('')
+        ..warn(
+          'The CocoaPods specs repository on this machine is out of date. '
+          'Running `$commandLine` in ios/, then the ${target.lane} lane once '
+          'more.',
+        );
+      final update = await streamShowing(
+        context.runner,
+        logger,
+        pod.executable,
+        pod.arguments,
         workingDirectory: directory,
-        environment: environment.isEmpty ? null : environment,
-      )) {
-        output.writeln(line);
-        logger.info('$prefix$line');
+        prefix: prefix,
+      );
+      if (update.exitCode == 0) {
+        logger.info('');
+        run = await lane();
+      } else {
+        // The first failure is still the one to explain; this says why there
+        // was no second attempt.
+        logger.warn(
+          '`$commandLine` failed (exit ${update.exitCode}), so the lane was '
+          'not run again.',
+        );
       }
-    } on ProcessExitException catch (failure) {
-      exitCode = failure.exitCode;
     }
+    final exitCode = run.exitCode;
+    final output = run.output;
 
     if (exitCode == 0) {
       logger.info(green.wrap('Released ${flavor.name} to ${target.id}.') ?? '');
       // A store upload can succeed and still be rejected in processing, so the
       // output of a success is worth reading too.
-      _reportDiagnoses(output.toString(), asWarning: true);
+      _reportDiagnoses(output, asWarning: true);
       return ShipwayExit.success;
     }
 
@@ -796,20 +835,22 @@ class ReleaseCommand extends Command<int> {
       ..err(
         'The ${target.lane} lane failed for ${flavor.name} (exit $exitCode).',
       );
-    _reportDiagnoses(output.toString());
+    _reportDiagnoses(output);
     return ShipwayExit.environmentError;
   }
 
+  /// What the lane's output meant.
+  ///
+  /// A failure is attributed to the step that failed before anything is
+  /// matched, and warnings are kept apart from its cause. A success has no
+  /// failing step, so all of its output is read and everything found is a
+  /// warning.
   void _reportDiagnoses(String output, {bool asWarning = false}) {
     final logger = _context.logger;
-    for (final diagnosis in ErrorClassifier.classifyAll(output)) {
-      logger.info('');
-      if (asWarning) {
-        logger.warn(diagnosis.summary);
-      } else {
-        logger.err(diagnosis.summary);
-      }
-      logger.info('  ${diagnosis.fix}');
+    if (asWarning) {
+      FailureReporter.warnings(logger, ErrorClassifier.classifyAll(output));
+    } else {
+      FailureReporter.failure(logger, ErrorClassifier.diagnose(output));
     }
   }
 }

@@ -8,6 +8,7 @@ import '../../core/toolchain/entrypoint_analysis.dart';
 import '../../generators/generator_registry.dart';
 import '../../generators/generated_file.dart';
 import '../exit_codes.dart';
+import '../failure_reporter.dart';
 import '../preflight.dart';
 import '../run_context.dart';
 
@@ -283,19 +284,19 @@ class BuildCommand extends Command<int> {
 
   void _reportDiagnoses(String output, {bool asWarning = false}) {
     final logger = _context.logger;
-    final diagnoses = ErrorClassifier.classifyAll(output);
-    if (diagnoses.isEmpty) return;
-
-    for (final diagnosis in diagnoses) {
-      logger.info('');
-      if (asWarning) {
-        logger.warn(diagnosis.summary);
-      } else {
-        logger.err(diagnosis.summary);
-      }
-      logger.info('  ${diagnosis.fix}');
-      final url = diagnosis.docsUrl;
-      if (url != null) logger.info('  $url');
+    if (asWarning) {
+      FailureReporter.warnings(logger, ErrorClassifier.classifyAll(output));
+      return;
+    }
+    // Flutter's output has no fastlane steps, so the whole of it is read. An
+    // unrecognised build failure stays silent, as it always has: the output
+    // was printed a moment ago and there is no step or error line to add.
+    final report = ErrorClassifier.diagnose(output);
+    if (!report.recognised && report.warnings.isEmpty) return;
+    if (report.recognised) {
+      FailureReporter.failure(logger, report);
+    } else {
+      FailureReporter.warnings(logger, report.warnings);
     }
   }
 

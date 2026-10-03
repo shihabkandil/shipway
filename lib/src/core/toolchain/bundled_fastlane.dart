@@ -116,6 +116,17 @@ abstract final class BundledFastlane {
     ...fastlaneArguments,
   ];
 
+  /// The environment a lane runs in: [credentials], and fastlane's update
+  /// check turned off.
+  ///
+  /// When a newer fastlane exists, a failed run ends with its whole changelog,
+  /// which pushed the real error of a field report a hundred lines up and fed
+  /// words like "invalid" to the classifier. The version is pinned in the
+  /// Gemfile; a lane is not the place to hear about another one. A value
+  /// already in [credentials] is left alone.
+  static Map<String, String> environment(Map<String, String> credentials) =>
+      <String, String>{'FASTLANE_SKIP_UPDATE_CHECK': '1', ...credentials};
+
   /// Prints the facts [FastlaneToolchain.parse] reads.
   static const String probeScript = r'''
 spec = Gem.loaded_specs["fastlane"]

@@ -5,6 +5,73 @@ them come from one field report of an app shipping two flavors to Firebase App
 Distribution, and shipway now catches each of them earlier than it did — but
 knowing the shape helps when a project is set up by hand.
 
+## Reading what `shipway release` says about a failed lane
+
+After a lane fails, shipway prints, in this order:
+
+```
+The beta lane failed for development (exit 1).
+  Failed step: cd /app && flutter build ipa --release --flavor development ...
+  [!] Exit status of command '...' was 1 instead of 0.
+
+<what it means>
+  <the one thing to do>
+
+Warnings — not why this failed:
+<anything else it noticed>
+```
+
+- **Failed step** is the fastlane step the failure belongs to, taken from
+  fastlane's `--- Step: ... ---` markers and its summary table. A diagnosis is
+  drawn only from that step's output and the `[!]` line, never from the rest of
+  the log.
+- **The explanation** appears only when shipway recognises the failure. When it
+  does not, it says so and prints the last twenty lines of the failing step
+  instead of guessing.
+- **Warnings** are true and are not the cause. `fastlane is warning that this
+  Ruby is near end of support` is the usual one.
+
+An earlier shipway read the whole log and reported every match as an error. On
+a self-hosted runner it explained a failed `pod install` as "App Store Connect
+refused the API key", because fastlane's update changelog further down the log
+contained "App Store Connect API" and "invalid". If you rotated a key on the
+strength of that message from 0.1.0-beta.3 or earlier, the key was probably
+fine. `asc.key_rejected` is now reported only when a step that calls App Store
+Connect fails with Apple's own authentication error.
+
+shipway also sets `FASTLANE_SKIP_UPDATE_CHECK=1` for the lanes it runs, so that
+changelog no longer follows a failure. Set it yourself for lanes you run by
+hand.
+
+## CocoaPods cannot find a pod version that Podfile.lock names
+
+**Recognise it.** Inside `flutter build ipa`, well above the end of the log:
+
+```
+[!] CocoaPods could not find compatible versions for pod "FirebaseAnalytics":
+  In snapshot (Podfile.lock):
+    FirebaseAnalytics (= 12.19.0)
+Error: CocoaPods's specs repository is too out-of-date to satisfy dependencies.
+```
+
+**Cause.** The machine's copy of the CocoaPods specs repository is older than
+the versions in `ios/Podfile.lock`. It happens on long-lived machines —
+self-hosted runners above all — where the lock file arrives with each checkout
+and the specs repository is refreshed only when somebody asks.
+
+**Fix.** `shipway release` does it for you, once: it runs
+`pod install --repo-update` in `ios/` — `bundle exec pod ...` when
+`ios/Gemfile` bundles CocoaPods — says that it did, and runs the lane again. By
+hand:
+
+```sh
+cd ios && pod install --repo-update
+```
+
+If the second attempt fails the same way, the specs repository was not the
+problem: the `Podfile` and `Podfile.lock` disagree, usually after a plugin
+upgrade. Run `pod update <pod>` and commit the lock file.
+
 ## A Firebase upload crashes partway through the APK upload
 
 **Recognise it.** The build finishes, `firebase_app_distribution` starts

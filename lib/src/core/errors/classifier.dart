@@ -1,3 +1,18 @@
+import 'failure_attribution.dart';
+
+/// Whether a diagnosis explains a failure or only accompanies one.
+///
+/// A field report showed a Ruby end-of-support notice in red beneath a failed
+/// lane, as if it were why the lane failed. A warning is true, and worth
+/// saying, but it is never the answer to "why did this fail".
+enum DiagnosisKind {
+  /// Explains why the command failed.
+  cause,
+
+  /// Worth knowing, and not why anything failed.
+  warning,
+}
+
 /// What a failed command meant, and the one thing to do about it.
 ///
 /// The point of this file is that a developer should never have to search for
@@ -9,6 +24,7 @@ class Diagnosis {
     required this.summary,
     required this.fix,
     this.docsUrl,
+    this.kind = DiagnosisKind.cause,
   });
 
   /// Stable identifier. Used in tests and `--json`, so it may not be renamed
@@ -22,6 +38,10 @@ class Diagnosis {
   final String fix;
 
   final String? docsUrl;
+
+  final DiagnosisKind kind;
+
+  bool get isWarning => kind == DiagnosisKind.warning;
 }
 
 /// One recognisable failure.
@@ -33,9 +53,30 @@ class ErrorSignature {
     required this.fix,
     this.docsUrl,
     this.anyOf = false,
+    this.kind = DiagnosisKind.cause,
+    this.steps,
   });
 
   final String id;
+
+  /// A warning is looked for in the whole output and reported apart from the
+  /// cause; see [DiagnosisKind].
+  final DiagnosisKind kind;
+
+  /// The fastlane steps this failure can come from, or null for any.
+  ///
+  /// Only consulted when the failing step is known. Text alone is not enough
+  /// for a failure whose wording is generic: "invalid" and "401" turn up in
+  /// logs that have nothing to do with a credential.
+  final List<Pattern>? steps;
+
+  /// Whether this failure is plausible for [step]. True when either side has
+  /// nothing to say: no [steps] declared, or output without step markers.
+  bool plausibleFor(String? step) {
+    final allowed = steps;
+    if (allowed == null || step == null) return true;
+    return allowed.any((pattern) => step.contains(pattern));
+  }
 
   /// Substrings or regexes that identify this failure.
   ///
@@ -57,8 +98,41 @@ class ErrorSignature {
     return anyOf ? patterns.any(present) : patterns.every(present);
   }
 
-  Diagnosis get diagnosis =>
-      Diagnosis(id: id, summary: summary, fix: fix, docsUrl: docsUrl);
+  Diagnosis get diagnosis => Diagnosis(
+    id: id,
+    summary: summary,
+    fix: fix,
+    docsUrl: docsUrl,
+    kind: kind,
+  );
+}
+
+/// What shipway makes of a failed run: where it failed, why, and what else it
+/// noticed.
+class FailureReport {
+  const FailureReport({
+    required this.attribution,
+    this.causes = const <Diagnosis>[],
+    this.warnings = const <Diagnosis>[],
+  });
+
+  final FailureAttribution attribution;
+
+  /// Signatures found in the failing region, most specific first. Empty when
+  /// shipway does not recognise the failure — which is to be said plainly, not
+  /// papered over with the nearest match.
+  final List<Diagnosis> causes;
+
+  /// Signatures of kind [DiagnosisKind.warning] found anywhere in the output.
+  final List<Diagnosis> warnings;
+
+  /// The most specific cause, or null.
+  Diagnosis? get cause => causes.isEmpty ? null : causes.first;
+
+  bool get recognised => causes.isNotEmpty;
+
+  /// Whether any cause carries [id].
+  bool hasCause(String id) => causes.any((d) => d.id == id);
 }
 
 /// Recognises failures shipway has seen before.
@@ -74,6 +148,10 @@ abstract final class ErrorClassifier {
   /// and has not been reproduced here.
   // `final`, not `const`: a RegExp cannot be a constant, and several
   // signatures need one to cover the wordings a tool has used across versions.
+  /// The one failure `shipway release` acts on itself, by refreshing the spec
+  /// repo and running the lane once more.
+  static const String podSpecsOutOfDate = 'ios.pods.specs_out_of_date';
+
   static final List<ErrorSignature> signatures = <ErrorSignature>[
     // --- iOS build and export -------------------------------------------
 
@@ -337,11 +415,27 @@ abstract final class ErrorClassifier {
           'inProgress; supply sets the status from the fraction on upload.',
     ),
 
+    // catalog. Scoped twice over after a field report: the old patterns —
+    // "App Store Connect API" anywhere plus "invalid" anywhere — matched
+    // fastlane's update changelog under a failed `pod install`, and a team
+    // rotated a working key. It now needs Apple's own authentication wording,
+    // from a step that talks to App Store Connect.
     ErrorSignature(
       id: 'asc.key_rejected',
       patterns: <Pattern>[
-        RegExp(r'App Store Connect API|Authentication credentials'),
-        RegExp(r'\b401\b|\b403\b|NOT_AUTHORIZED|invalid'),
+        RegExp(
+          r'Authentication credentials are missing or invalid|NOT_AUTHORIZED|'
+          r'App Store Connect API[^\n]*\b40[13]\b|'
+          r'\b40[13]\b[^\n]*App Store Connect API',
+        ),
+      ],
+      steps: <Pattern>[
+        RegExp(
+          r'^(app_store_connect_api_key|upload_to_testflight|pilot|testflight|'
+          r'upload_to_app_store|deliver|appstore|latest_testflight_build_number|'
+          r'app_store_build_number|sync_code_signing|match|match_nuke|'
+          r'get_certificates|cert|get_provisioning_profile|sigh)$',
+        ),
       ],
       summary:
           'App Store Connect refused the API key — wrong, expired, or without '
@@ -360,6 +454,28 @@ abstract final class ErrorClassifier {
       fix:
           'Add targets.testflight.groups, or set distribute_external to '
           'false. `shipway release` checks this before building.',
+    ),
+
+    // --- CocoaPods -------------------------------------------------------
+
+    // field report 2026-10-01: a self-hosted runner whose spec repo predated
+    // the Podfile.lock. `shipway release` retries this one itself.
+    ErrorSignature(
+      id: podSpecsOutOfDate,
+      patterns: <Pattern>[
+        RegExp(
+          r"CocoaPods's specs repository is too out-of-date|"
+          r'CocoaPods could not find compatible versions for pod',
+        ),
+      ],
+      summary:
+          "This machine's copy of the CocoaPods specs repository is older than "
+          'the pod versions Podfile.lock asks for, so `pod install` cannot '
+          'find them.',
+      fix:
+          'Run `pod install --repo-update` in ios/. If it still cannot '
+          'resolve, the Podfile and Podfile.lock disagree: run `pod update '
+          '<pod>` and commit the lock file.',
     ),
 
     // --- toolchain -------------------------------------------------------
@@ -399,6 +515,7 @@ abstract final class ErrorClassifier {
     // catalog
     ErrorSignature(
       id: 'ruby.too_old_for_fastlane',
+      kind: DiagnosisKind.warning,
       patterns: <Pattern>['Support for your Ruby version'],
       summary: 'fastlane is warning that this Ruby is near end of support.',
       fix: 'Upgrade Ruby to 3.3 or newer.',
@@ -417,9 +534,12 @@ abstract final class ErrorClassifier {
 
     // verified 2026-09-09: the failure that is not one. Flutter exits zero and
     // the missing keys are simply absent from the built Info.plist, so this is
-    // only ever caught by reading the build output.
+    // only ever caught by reading the build output. A warning for the same
+    // reason: the build prints it and carries on, and what fails is a later
+    // upload, whose step would otherwise hide it.
     ErrorSignature(
       id: 'ios.flavor.missing_version',
+      kind: DiagnosisKind.warning,
       patterns: <Pattern>[
         RegExp(r'Version Number: Missing|Build Number: Missing'),
       ],
@@ -434,25 +554,61 @@ abstract final class ErrorClassifier {
     ),
   ];
 
-  /// The first signature matching [output], or null.
+  /// The first signature matching [output], or null. A cause before a
+  /// warning.
   static Diagnosis? classify(String? output) {
-    if (output == null || output.isEmpty) return null;
-    for (final signature in signatures) {
-      if (signature.matches(output)) return signature.diagnosis;
-    }
-    return null;
+    final all = classifyAll(output);
+    return all.isEmpty ? null : all.first;
   }
 
-  /// Every signature matching [output], most specific first.
+  /// Every signature matching [output] as a whole: causes most specific
+  /// first, then warnings.
   ///
-  /// One failure often trips several: a run can hit both a stale Ruby warning
-  /// and the real error, and hiding the second behind the first would be worse
-  /// than showing both.
+  /// For output that is not a failed lane — a fragment, or a run that
+  /// succeeded and is being read for what it warned about. A failure goes
+  /// through [diagnose], which first works out which part of the output the
+  /// failure is in.
   static List<Diagnosis> classifyAll(String? output) {
     if (output == null || output.isEmpty) return const <Diagnosis>[];
     return <Diagnosis>[
+      ..._matching(output, DiagnosisKind.cause),
+      ..._matching(output, DiagnosisKind.warning),
+    ];
+  }
+
+  /// What a failed run's [output] means.
+  ///
+  /// Causes are matched against the failing step's output and fastlane's
+  /// error line only, and only signatures plausible for that step. Warnings
+  /// are matched against everything, since fastlane prints them at the start.
+  /// Output with no step markers has no narrower region than itself, so a
+  /// plain `flutter build` is classified as it always was.
+  static FailureReport diagnose(String? output) {
+    final text = output ?? '';
+    final attribution = FailureAttribution.parse(text);
+    return FailureReport(
+      attribution: attribution,
+      causes: _matching(
+        attribution.region,
+        DiagnosisKind.cause,
+        step: attribution.failedStep,
+      ),
+      warnings: _matching(text, DiagnosisKind.warning),
+    );
+  }
+
+  static List<Diagnosis> _matching(
+    String text,
+    DiagnosisKind kind, {
+    String? step,
+  }) {
+    if (text.isEmpty) return const <Diagnosis>[];
+    return <Diagnosis>[
       for (final signature in signatures)
-        if (signature.matches(output)) signature.diagnosis,
+        if (signature.kind == kind &&
+            signature.plausibleFor(step) &&
+            signature.matches(text))
+          signature.diagnosis,
     ];
   }
 
