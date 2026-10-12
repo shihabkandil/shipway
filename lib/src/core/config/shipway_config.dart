@@ -99,6 +99,7 @@ class AppConfig {
     this.signing = const SigningConfig(),
     this.targets = const TargetsConfig(),
     this.versioning = const VersioningConfig(),
+    this.crashlytics = const CrashlyticsConfig(),
   });
 
   factory AppConfig.fromJson(Map<dynamic, dynamic> json) =>
@@ -119,6 +120,7 @@ class AppConfig {
   final SigningConfig signing;
   final TargetsConfig targets;
   final VersioningConfig versioning;
+  final CrashlyticsConfig crashlytics;
 
   /// Whether this app ships to Apple at all.
   ///
@@ -585,6 +587,30 @@ class VersioningConfig {
   final bool syncIosAndroid;
 
   Map<String, dynamic> toJson() => _$VersioningConfigToJson(this);
+}
+
+/// Crash reporting symbols, uploaded by the release lanes.
+@JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
+class CrashlyticsConfig {
+  const CrashlyticsConfig({this.uploadSymbols = false, this.obfuscate = false});
+
+  factory CrashlyticsConfig.fromJson(Map<dynamic, dynamic> json) =>
+      _$CrashlyticsConfigFromJson(json);
+
+  /// Upload the archive's dSYMs before an iOS store upload, and build the
+  /// Android Firebase artifact with `--split-debug-info` and upload its Dart
+  /// symbols. Off by default: the Android half needs the Firebase CLI on the
+  /// machine and a service account allowed to write Crashlytics symbols.
+  @JsonKey(name: 'upload_symbols')
+  final bool uploadSymbols;
+
+  /// Build the iOS release and the Android Firebase artifact with
+  /// `--obfuscate`, which renames Dart symbols against reverse engineering.
+  /// Requires [uploadSymbols]: an obfuscated crash is unreadable without
+  /// them. Code that matches on `runtimeType.toString()` stops matching.
+  final bool obfuscate;
+
+  Map<String, dynamic> toJson() => _$CrashlyticsConfigToJson(this);
 }
 
 @JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)

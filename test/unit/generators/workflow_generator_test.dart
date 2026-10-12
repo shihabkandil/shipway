@@ -26,12 +26,14 @@ ResolvedApp app({
     androidAppIdRef: 'FB_ANDROID_APP_ID',
   ),
   bool flavors = true,
+  bool uploadSymbols = false,
 }) => ResolvedApp(
   appId: 'main',
   projectName: 'acme_app',
   androidApplicationId: 'com.acme.app',
   iosBundleId: 'com.acme.app',
   gradleDsl: GradleDsl.kotlin,
+  uploadCrashlyticsSymbols: uploadSymbols,
   iosTeamId: iosTeamId,
   matchGitUrl: matchGitUrl,
   ascApiKey: const AscApiKeyConfig(
@@ -328,5 +330,29 @@ void main() {
     final file = const WorkflowGenerator().render(app()).single;
     expect(file.createOnly, isTrue);
     expect(const WorkflowGenerator().owns(WorkflowGenerator.path), isFalse);
+  });
+
+  group('the Firebase CLI for Crashlytics symbols', () {
+    test('is installed when the Android job runs the firebase lane', () {
+      final rendered = render(app(play: null, uploadSymbols: true));
+      expect(rendered, contains('bundle exec fastlane android firebase'));
+      expect(rendered, contains('uses: actions/setup-node@v4'));
+      expect(rendered, contains('npm install --global firebase-tools'));
+      expect(
+        () => parse(app(play: null, uploadSymbols: true)),
+        returnsNormally,
+      );
+    });
+
+    test('is not installed when the job runs the play lane', () {
+      expect(
+        render(app(uploadSymbols: true)),
+        isNot(contains('firebase-tools')),
+      );
+    });
+
+    test('is not installed unless the config asks for symbols', () {
+      expect(render(app(play: null)), isNot(contains('firebase-tools')));
+    });
   });
 }

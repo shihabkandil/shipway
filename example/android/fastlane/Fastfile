@@ -154,6 +154,18 @@ def mapping_path(flavor)
   root_path("build/app/outputs/mapping/#{flavor}Release/mapping.txt")
 end
 
+def dart_symbols_path(flavor)
+  root_path("build/app/outputs/symbols/#{flavor}")
+end
+
+def upload_dart_symbols(app_id:, symbols:, credentials:)
+  require_file(symbols, "The build was not run with --split-debug-info.")
+  sh(
+    { "GOOGLE_APPLICATION_CREDENTIALS" => credentials },
+    "firebase crashlytics:symbols:upload --app=#{app_id.shellescape} #{symbols.shellescape}"
+  )
+end
+
 require 'json'
 
 # Which Firebase app a flavor uploads to.
@@ -230,7 +242,8 @@ platform :android do
       flavor: flavor,
       entrypoint: config[:entrypoint],
       version: options[:version_name],
-      build: options[:build_number]
+      build: options[:build_number],
+      extra: options[:split_debug_info] ? ["--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"] : []
     )
 
     artifact = artifact_path(flavor, type)
@@ -350,14 +363,24 @@ platform :android do
     UI.message("Shipping #{config[:package_name]} #{name}+#{number} to Firebase App Distribution")
 
     type = options.fetch(:type, "apk")
+    upload_symbols = !options[:skip_symbols]
     artifact = build(
       flavor: flavor,
       type: type,
       version_name: name,
-      build_number: number
+      build_number: number,
+      split_debug_info: upload_symbols
     )
 
     next UI.important("dry_run: would upload #{artifact} to #{app_id}") if options[:dry_run]
+
+    if upload_symbols
+      upload_dart_symbols(
+        app_id: app_id,
+        symbols: dart_symbols_path(flavor),
+        credentials: ENV.fetch(credentials)
+      )
+    end
 
     firebase_app_distribution(
       # A service-account file, not the deprecated CI token, which App

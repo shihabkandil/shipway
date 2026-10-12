@@ -156,6 +156,17 @@ abstract final class ConfigLoader {
         // instead. See doc/deploy-targets.md.
       }
 
+      if (app.crashlytics.obfuscate && !app.crashlytics.uploadSymbols) {
+        throw ConfigException(
+          'app `${entry.key}` sets `crashlytics.obfuscate: true` without '
+          '`upload_symbols`.',
+          path: path,
+          hint:
+              'An obfuscated crash cannot be read without its symbols. Set '
+              'crashlytics.upload_symbols to true as well.',
+        );
+      }
+
       // Uploads fine and then fails at distribution, which is after the
       // slowest part of the job — so it is caught here instead.
       final testflight = app.targets.testflight;

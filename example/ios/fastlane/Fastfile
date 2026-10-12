@@ -9,8 +9,8 @@ require 'shellwords'
 default_platform(:ios)
 
 FLAVORS = {
-  "development" => { bundle_id: "com.acme.app.dev", entrypoint: "lib/main_dev.dart" },
-  "production" => { bundle_id: "com.acme.app", entrypoint: "lib/main_prod.dart" },
+  "development" => { bundle_id: "com.acme.app.dev", google_service_info: "ios/config/development/GoogleService-Info.plist", entrypoint: "lib/main_dev.dart" },
+  "production" => { bundle_id: "com.acme.app", google_service_info: "ios/config/production/GoogleService-Info.plist", entrypoint: "lib/main_prod.dart" },
 }.freeze
 
 def flavor_config(flavor)
@@ -118,6 +118,25 @@ def exported_ipa(since)
   found
 end
 
+def archive_dsyms
+  dsyms = Dir[root_path("build/ios/archive/Runner.xcarchive/dSYMs", "*.dSYM")]
+  UI.user_error!("No dSYMs in build/ios/archive/Runner.xcarchive/dSYMs.") if dsyms.empty?
+  dsyms
+end
+
+def crashlytics_upload_symbols_binary
+  found = [
+    root_path("build/ios/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/upload-symbols"),
+    root_path("ios/Pods/FirebaseCrashlytics/upload-symbols")
+  ].find { |path| File.exist?(path) }
+  UI.user_error!("Crashlytics' upload-symbols tool was not found. Build the app first.") if found.nil?
+  found
+end
+
+def dart_symbols_path(flavor)
+  root_path("build/ios/symbols/#{flavor}")
+end
+
 # targets.testflight.changelog_from: git
 def what_to_test(override = nil)
   return override unless override.to_s.strip.empty?
@@ -139,6 +158,24 @@ def what_to_test(override = nil)
 end
 
 platform :ios do
+  desc "Upload the last archive's dSYMs to Crashlytics"
+  lane :crashlytics_symbols do |options|
+    config = flavor_config(require_flavor(options))
+    google_service_info = config[:google_service_info].to_s
+    if google_service_info.empty?
+      UI.user_error!("No GoogleService-Info.plist is configured for #{config[:bundle_id]}. " \
+                     "Set flavors.<flavor>.firebase.ios in shipway.yaml.")
+    end
+    require_file(root_path(google_service_info), "Download it from the Firebase console, or correct the path in shipway.yaml.")
+
+    upload_symbols_to_crashlytics(
+      dsym_paths: archive_dsyms,
+      gsp_path: root_path(google_service_info),
+      binary_path: crashlytics_upload_symbols_binary,
+      fail_on_error: true
+    )
+  end
+
   private_lane :asc_api_key do
     require_env("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_P8_BASE64")
 
@@ -184,7 +221,7 @@ platform :ios do
       entrypoint: config[:entrypoint],
       version: options[:version_name],
       build: options[:build_number],
-      extra: ["--no-codesign"]
+      extra: ["--no-codesign", "--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"]
     )
 
     build_app(
@@ -237,6 +274,8 @@ platform :ios do
 
     next UI.important("dry_run: would upload #{ipa}") if options[:dry_run]
 
+    crashlytics_symbols(flavor: flavor) unless options[:skip_symbols]
+
     upload_to_testflight(
       api_key: api_key,
       app_identifier: config[:bundle_id],
@@ -267,6 +306,8 @@ platform :ios do
     ipa = build_ipa(flavor: flavor, version_name: name, build_number: number)
 
     next UI.important("dry_run: would upload #{ipa}") if options[:dry_run]
+
+    crashlytics_symbols(flavor: flavor) unless options[:skip_symbols]
 
     upload_to_app_store(
       api_key: api_key,
