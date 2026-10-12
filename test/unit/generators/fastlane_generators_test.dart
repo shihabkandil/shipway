@@ -12,6 +12,7 @@ ResolvedApp app({
   AscApiKeyConfig? apiKey,
   bool flavors = true,
   bool uploadSymbols = false,
+  bool obfuscate = false,
   AppstoreTarget? appstore,
 }) => ResolvedApp(
   appId: 'main',
@@ -24,6 +25,7 @@ ResolvedApp app({
   matchGitUrl: matchGitUrl,
   ascApiKey: apiKey,
   uploadCrashlyticsSymbols: uploadSymbols,
+  obfuscate: obfuscate,
   appstore: appstore,
   flavors: !flavors
       ? const <ResolvedFlavor>[]
@@ -604,5 +606,37 @@ void main() {
         lessThan(rendered.indexOf(call)),
       );
     });
+  });
+
+  group('obfuscation', () {
+    String fastfile(ResolvedApp resolved) => renderOne(
+      const IosFastfileGenerator(),
+      resolved,
+      IosFastfileGenerator.path,
+    );
+
+    test('is off unless the config asks for it', () {
+      final rendered = fastfile(app(uploadSymbols: true));
+      expect(rendered, isNot(contains('--obfuscate')));
+      expect(rendered, isNot(contains('dart_symbols_path')));
+    });
+
+    for (final export in IosExport.values) {
+      test(
+        'reaches the ${export.name} build lane with somewhere to put symbols',
+        () {
+          final rendered = fastfile(
+            app(export: export, uploadSymbols: true, obfuscate: true),
+          );
+          expect(
+            rendered,
+            contains(
+              '"--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"',
+            ),
+          );
+          expect(rendered, contains('def dart_symbols_path(flavor)'));
+        },
+      );
+    }
   });
 }

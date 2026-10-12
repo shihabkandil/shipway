@@ -219,4 +219,25 @@ apps:
 ''');
     expect(config.appOrNull(null)!.crashlytics.uploadSymbols, isTrue);
   });
+
+  test('crashlytics.obfuscate needs upload_symbols', () {
+    expect(
+      () => ConfigLoader.parse('''
+version: 1
+project:
+  name: acme_app
+apps:
+  main:
+    crashlytics:
+      obfuscate: true
+'''),
+      throwsA(
+        isA<ConfigException>().having(
+          (e) => e.toString(),
+          'message',
+          contains('upload_symbols'),
+        ),
+      ),
+    );
+  });
 }

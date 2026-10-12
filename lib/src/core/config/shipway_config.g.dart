@@ -725,18 +725,22 @@ const _$VersioningStrategyEnumMap = {
 
 CrashlyticsConfig _$CrashlyticsConfigFromJson(Map json) =>
     $checkedCreate('CrashlyticsConfig', json, ($checkedConvert) {
-      $checkKeys(json, allowedKeys: const ['upload_symbols']);
+      $checkKeys(json, allowedKeys: const ['upload_symbols', 'obfuscate']);
       final val = CrashlyticsConfig(
         uploadSymbols: $checkedConvert(
           'upload_symbols',
           (v) => v as bool? ?? false,
         ),
+        obfuscate: $checkedConvert('obfuscate', (v) => v as bool? ?? false),
       );
       return val;
     }, fieldKeyMap: const {'uploadSymbols': 'upload_symbols'});
 
 Map<String, dynamic> _$CrashlyticsConfigToJson(CrashlyticsConfig instance) =>
-    <String, dynamic>{'upload_symbols': instance.uploadSymbols};
+    <String, dynamic>{
+      'upload_symbols': instance.uploadSymbols,
+      'obfuscate': instance.obfuscate,
+    };
 
 SecretsConfig _$SecretsConfigFromJson(Map json) => $checkedCreate(
   'SecretsConfig',

@@ -65,6 +65,7 @@ class IosFastfileGenerator extends Generator {
     ),
     _ipaHelper(),
     if (app.uploadCrashlyticsSymbols) _crashlyticsHelpers(),
+    if (app.obfuscate) _dartSymbolsHelper(),
     _changelogHelper(app),
     'platform :ios do',
     if (app.uploadCrashlyticsSymbols) _crashlyticsSymbolsLane(),
@@ -138,6 +139,19 @@ end
   end
 ''';
 
+  /// `--obfuscate` needs somewhere to put the symbols it strips. Crashlytics
+  /// reads the obfuscated Dart frames from `App.framework.dSYM`, which the
+  /// archive carries, so these files are kept rather than uploaded.
+  String _dartSymbolsHelper() => r'''
+def dart_symbols_path(flavor)
+  root_path("build/ios/symbols/#{flavor}")
+end
+''';
+
+  static String _obfuscation(ResolvedApp app) => app.obfuscate
+      ? ', "--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"'
+      : '';
+
   /// Before the store upload, so a symbols failure stops a build nobody has
   /// received yet. `skip_symbols:true` ships without them.
   static String _crashlyticsSymbolsCall(ResolvedApp app) =>
@@ -196,8 +210,8 @@ $auth
   }
 
   String _buildLane(ResolvedApp app) => switch (app.iosExport) {
-    IosExport.gym => _buildLaneGym(app.iosTeamId),
-    IosExport.flutter => _buildLaneFlutter(),
+    IosExport.gym => _buildLaneGym(app.iosTeamId, _obfuscation(app)),
+    IosExport.flutter => _buildLaneFlutter(_obfuscation(app)),
   };
 
   /// `flutter build ipa --no-codesign` archives, `gym` exports.
@@ -206,7 +220,7 @@ $auth
   /// again: the second export is the one that counts, and the first costs a
   /// signing round trip and fails outright when no distribution profile is
   /// installed yet. Verified that gym signs an unsigned archive correctly.
-  String _buildLaneGym(String? teamId) =>
+  String _buildLaneGym(String? teamId, String obfuscation) =>
       '''
   desc "Build a signed IPA for a flavor"
   lane :build_ipa do |options|
@@ -226,7 +240,7 @@ $auth
       entrypoint: config[:entrypoint],
       version: options[:version_name],
       build: options[:build_number],
-      extra: ["--no-codesign"]
+      extra: ["--no-codesign"$obfuscation]
     )
 
     build_app(
@@ -255,7 +269,8 @@ $auth
 ''';
 
   /// `flutter build ipa --export-options-plist` does both legs.
-  String _buildLaneFlutter() => '''
+  String _buildLaneFlutter(String obfuscation) =>
+      '''
   desc "Build a signed IPA for a flavor"
   lane :build_ipa do |options|
     flavor = require_flavor(options)
@@ -273,7 +288,7 @@ $auth
       entrypoint: config[:entrypoint],
       version: options[:version_name],
       build: options[:build_number],
-      extra: ["--export-options-plist=#{plist.shellescape}"]
+      extra: ["--export-options-plist=#{plist.shellescape}"$obfuscation]
     )
 
     exported_ipa(started)

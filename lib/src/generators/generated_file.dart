@@ -183,6 +183,7 @@ class ResolvedApp {
     this.versioning = const VersioningConfig(),
     this.appstore,
     this.uploadCrashlyticsSymbols = false,
+    this.obfuscate = false,
   });
 
   final String appId;
@@ -238,6 +239,9 @@ class ResolvedApp {
 
   /// `crashlytics.upload_symbols`.
   final bool uploadCrashlyticsSymbols;
+
+  /// `crashlytics.obfuscate`.
+  final bool obfuscate;
 
   bool get hasFlavors => flavors.isNotEmpty;
 

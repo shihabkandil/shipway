@@ -592,7 +592,7 @@ class VersioningConfig {
 /// Crash reporting symbols, uploaded by the release lanes.
 @JsonSerializable(anyMap: true, checked: true, disallowUnrecognizedKeys: true)
 class CrashlyticsConfig {
-  const CrashlyticsConfig({this.uploadSymbols = false});
+  const CrashlyticsConfig({this.uploadSymbols = false, this.obfuscate = false});
 
   factory CrashlyticsConfig.fromJson(Map<dynamic, dynamic> json) =>
       _$CrashlyticsConfigFromJson(json);
@@ -603,6 +603,12 @@ class CrashlyticsConfig {
   /// machine and a service account allowed to write Crashlytics symbols.
   @JsonKey(name: 'upload_symbols')
   final bool uploadSymbols;
+
+  /// Build the iOS release and the Android Firebase artifact with
+  /// `--obfuscate`, which renames Dart symbols against reverse engineering.
+  /// Requires [uploadSymbols]: an obfuscated crash is unreadable without
+  /// them. Code that matches on `runtimeType.toString()` stops matching.
+  final bool obfuscate;
 
   Map<String, dynamic> toJson() => _$CrashlyticsConfigToJson(this);
 }

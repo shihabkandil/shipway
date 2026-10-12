@@ -12,6 +12,7 @@ ResolvedApp app({
   VersioningConfig versioning = const VersioningConfig(),
   bool flavors = true,
   bool uploadSymbols = false,
+  bool obfuscate = false,
 }) => ResolvedApp(
   appId: 'main',
   projectName: 'acme_app',
@@ -23,6 +24,7 @@ ResolvedApp app({
   androidSigning: signing,
   versioning: versioning,
   uploadCrashlyticsSymbols: uploadSymbols,
+  obfuscate: obfuscate,
   flavors: !flavors
       ? const <ResolvedFlavor>[]
       : <ResolvedFlavor>[
@@ -481,10 +483,19 @@ void main() {
       },
     );
 
-    test('never obfuscate, which would rename types matched by name', () {
+    test('are not obfuscated unless the config asks', () {
       expect(
         render(app(firebase: firebase, uploadSymbols: true)),
         isNot(contains('--obfuscate')),
+      );
+    });
+
+    test('come from an obfuscated build when the config asks', () {
+      expect(
+        render(app(firebase: firebase, uploadSymbols: true, obfuscate: true)),
+        contains(
+          '["--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"]',
+        ),
       );
     });
   });

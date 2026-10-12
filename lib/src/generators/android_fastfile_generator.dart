@@ -139,8 +139,9 @@ end
 
   /// `--split-debug-info` moves the Dart symbols out of the artifact, so a
   /// build made with it needs them uploaded for Crashlytics to read a Dart
-  /// stack. Not `--obfuscate`: that renames types, and code matching on
-  /// `runtimeType.toString()` silently stops matching.
+  /// stack. `--obfuscate` joins it only when the config asks, because it
+  /// renames types and code matching on `runtimeType.toString()` stops
+  /// matching.
   String _dartSymbolsHelpers() => r'''
 def dart_symbols_path(flavor)
   root_path("build/app/outputs/symbols/#{flavor}")
@@ -182,7 +183,7 @@ $keyPropertiesGuard
       flavor: flavor,
       entrypoint: config[:entrypoint],
       version: options[:version_name],
-      build: options[:build_number]${_uploadsDartSymbols(app) ? ',\n      extra: options[:split_debug_info] ? ["--split-debug-info #{dart_symbols_path(flavor).shellescape}"] : []' : ''}
+      build: options[:build_number]${_uploadsDartSymbols(app) ? ',\n      extra: options[:split_debug_info] ? [${app.obfuscate ? '"--obfuscate", ' : ''}"--split-debug-info #{dart_symbols_path(flavor).shellescape}"] : []' : ''}
     )
 
     artifact = artifact_path(flavor, type)
