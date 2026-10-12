@@ -11,6 +11,8 @@ ResolvedApp app({
   String? matchGitUrl,
   AscApiKeyConfig? apiKey,
   bool flavors = true,
+  bool uploadSymbols = false,
+  AppstoreTarget? appstore,
 }) => ResolvedApp(
   appId: 'main',
   projectName: 'acme_app',
@@ -21,6 +23,8 @@ ResolvedApp app({
   iosExport: export,
   matchGitUrl: matchGitUrl,
   ascApiKey: apiKey,
+  uploadCrashlyticsSymbols: uploadSymbols,
+  appstore: appstore,
   flavors: !flavors
       ? const <ResolvedFlavor>[]
       : const <ResolvedFlavor>[
@@ -30,6 +34,7 @@ ResolvedApp app({
             entrypoint: 'lib/main_dev.dart',
             dimension: 'environment',
             iosBundleId: 'com.acme.app.dev',
+            firebaseIos: 'ios/config/dev/GoogleService-Info.plist',
           ),
           ResolvedFlavor(
             name: 'prod',
@@ -541,6 +546,63 @@ void main() {
           reason: '$name must be read from the environment',
         );
       }
+    });
+  });
+
+  group('Crashlytics dSYMs', () {
+    String fastfile(ResolvedApp resolved) => renderOne(
+      const IosFastfileGenerator(),
+      resolved,
+      IosFastfileGenerator.path,
+    );
+
+    test('are left out unless the config asks for them', () {
+      final rendered = fastfile(app());
+      expect(rendered, isNot(contains('crashlytics_symbols')));
+      expect(rendered, isNot(contains('google_service_info')));
+    });
+
+    test('name each flavor\'s GoogleService-Info.plist', () {
+      expect(
+        fastfile(app(uploadSymbols: true)),
+        contains(
+          'google_service_info: "ios/config/dev/GoogleService-Info.plist"',
+        ),
+      );
+    });
+
+    test('upload every dSYM in the archive Flutter leaves behind', () {
+      final rendered = fastfile(app(uploadSymbols: true));
+      expect(rendered, contains('lane :crashlytics_symbols do |options|'));
+      expect(
+        rendered,
+        contains(
+          'Dir[root_path("${IosFastfileGenerator.archivePath}/dSYMs", "*.dSYM")]',
+        ),
+      );
+      expect(rendered, contains('firebase-ios-sdk/Crashlytics/upload-symbols'));
+      expect(rendered, contains('fail_on_error: true'));
+    });
+
+    test('go up before the build reaches TestFlight or the App Store', () {
+      final rendered = fastfile(
+        app(uploadSymbols: true, appstore: const AppstoreTarget()),
+      );
+      const call =
+          'crashlytics_symbols(flavor: flavor) unless options[:skip_symbols]';
+      expect(call.allMatches(rendered), hasLength(2));
+      expect(
+        rendered.indexOf(call),
+        lessThan(rendered.indexOf('upload_to_testflight(')),
+      );
+      expect(
+        rendered.lastIndexOf(call),
+        lessThan(rendered.indexOf('upload_to_app_store(')),
+      );
+      expect(
+        rendered.indexOf('if options[:dry_run]'),
+        lessThan(rendered.indexOf(call)),
+      );
     });
   });
 }

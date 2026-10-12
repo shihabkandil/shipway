@@ -50,7 +50,11 @@ class IosFastfileGenerator extends Generator {
     FastlaneRuby.header('ios'),
     FastlaneRuby.flavorTable(
       app,
-      (flavor) => <String, String>{'bundle_id': flavor.iosBundleId ?? ''},
+      (flavor) => <String, String>{
+        'bundle_id': flavor.iosBundleId ?? '',
+        if (app.uploadCrashlyticsSymbols)
+          'google_service_info': flavor.firebaseIos ?? '',
+      },
     ),
     FastlaneRuby.helpers(),
     FastlaneRuby.flutterBuild(),
@@ -60,8 +64,10 @@ class IosFastfileGenerator extends Generator {
       platform: 'ios',
     ),
     _ipaHelper(),
+    if (app.uploadCrashlyticsSymbols) _crashlyticsHelpers(),
     _changelogHelper(app),
     'platform :ios do',
+    if (app.uploadCrashlyticsSymbols) _crashlyticsSymbolsLane(),
     _certificatesLane(app),
     _buildLane(app),
     _testflightLane(app),
@@ -89,6 +95,55 @@ def exported_ipa(since)
   found
 end
 ''';
+
+  /// Every dSYM in the archive — the app, its extensions, Flutter's
+  /// `App.framework` and each embedded framework — and the Crashlytics tool
+  /// that uploads them, from the Swift Package checkout Flutter keeps under
+  /// `build/ios/SourcePackages` or, failing that, from CocoaPods.
+  String _crashlyticsHelpers() =>
+      '''
+def archive_dsyms
+  dsyms = Dir[root_path("$archivePath/dSYMs", "*.dSYM")]
+  UI.user_error!("No dSYMs in $archivePath/dSYMs.") if dsyms.empty?
+  dsyms
+end
+
+def crashlytics_upload_symbols_binary
+  found = [
+    root_path("build/ios/SourcePackages/checkouts/firebase-ios-sdk/Crashlytics/upload-symbols"),
+    root_path("ios/Pods/FirebaseCrashlytics/upload-symbols")
+  ].find { |path| File.exist?(path) }
+  UI.user_error!("Crashlytics' upload-symbols tool was not found. Build the app first.") if found.nil?
+  found
+end
+''';
+
+  String _crashlyticsSymbolsLane() => '''
+  desc "Upload the last archive's dSYMs to Crashlytics"
+  lane :crashlytics_symbols do |options|
+    config = flavor_config(require_flavor(options))
+    google_service_info = config[:google_service_info].to_s
+    if google_service_info.empty?
+      UI.user_error!("No GoogleService-Info.plist is configured for #{config[:bundle_id]}. " \\
+                     "Set flavors.<flavor>.firebase.ios in shipway.yaml.")
+    end
+    require_file(root_path(google_service_info), "Download it from the Firebase console, or correct the path in shipway.yaml.")
+
+    upload_symbols_to_crashlytics(
+      dsym_paths: archive_dsyms,
+      gsp_path: root_path(google_service_info),
+      binary_path: crashlytics_upload_symbols_binary,
+      fail_on_error: true
+    )
+  end
+''';
+
+  /// Before the store upload, so a symbols failure stops a build nobody has
+  /// received yet. `skip_symbols:true` ships without them.
+  static String _crashlyticsSymbolsCall(ResolvedApp app) =>
+      app.uploadCrashlyticsSymbols
+      ? '\n    crashlytics_symbols(flavor: flavor) unless options[:skip_symbols]\n'
+      : '';
 
   String _certificatesLane(ResolvedApp app) {
     final key = app.ascApiKey;
@@ -263,7 +318,7 @@ $auth
     ipa = build_ipa(flavor: flavor, version_name: name, build_number: number)
 
     next UI.important("dry_run: would upload #{ipa}") if options[:dry_run]
-
+${_crashlyticsSymbolsCall(app)}
     upload_to_testflight(
       api_key: api_key,
       app_identifier: config[:bundle_id],
@@ -326,7 +381,7 @@ $auth
     ipa = build_ipa(flavor: flavor, version_name: name, build_number: number)
 
     next UI.important("dry_run: would upload #{ipa}") if options[:dry_run]
-
+${_crashlyticsSymbolsCall(app)}
     upload_to_app_store(
       api_key: api_key,
       app_identifier: config[:bundle_id],
