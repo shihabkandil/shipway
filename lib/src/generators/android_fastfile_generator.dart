@@ -89,6 +89,7 @@ class AndroidFastfileGenerator extends Generator {
         firebase: firebase != null,
       ),
       _artifactHelper(),
+      if (_uploadsDartSymbols(app)) _dartSymbolsHelpers(),
       if (firebase != null) ...<String>[
         _firebaseAppIdHelper(),
         FastlaneRuby.changelog(
@@ -105,7 +106,7 @@ class AndroidFastfileGenerator extends Generator {
       // Whenever the target is configured. It used to also need
       // android_app_id_ref, and without one the lane was silently left out:
       // a config asked for Firebase and the Fastfile had no way to get there.
-      if (firebase != null) _firebaseLane(firebase),
+      if (firebase != null) _firebaseLane(firebase, _uploadsDartSymbols(app)),
       'end',
     ].join('\n');
   }
@@ -128,6 +129,29 @@ end
 
 def mapping_path(flavor)
   root_path("build/app/outputs/mapping/#{flavor}Release/mapping.txt")
+end
+''';
+
+  /// Only the Firebase lane uploads Dart symbols, so without that target
+  /// nothing would read them.
+  static bool _uploadsDartSymbols(ResolvedApp app) =>
+      app.uploadCrashlyticsSymbols && app.firebase != null;
+
+  /// `--split-debug-info` moves the Dart symbols out of the artifact, so a
+  /// build made with it needs them uploaded for Crashlytics to read a Dart
+  /// stack. Not `--obfuscate`: that renames types, and code matching on
+  /// `runtimeType.toString()` silently stops matching.
+  String _dartSymbolsHelpers() => r'''
+def dart_symbols_path(flavor)
+  root_path("build/app/outputs/symbols/#{flavor}")
+end
+
+def upload_dart_symbols(app_id:, symbols:, credentials:)
+  require_file(symbols, "The build was not run with --split-debug-info.")
+  sh(
+    { "GOOGLE_APPLICATION_CREDENTIALS" => credentials },
+    "firebase crashlytics:symbols:upload --app=#{app_id.shellescape} #{symbols.shellescape}"
+  )
 end
 ''';
 
@@ -158,7 +182,7 @@ $keyPropertiesGuard
       flavor: flavor,
       entrypoint: config[:entrypoint],
       version: options[:version_name],
-      build: options[:build_number]
+      build: options[:build_number]${_uploadsDartSymbols(app) ? ',\n      extra: options[:split_debug_info] ? ["--split-debug-info #{dart_symbols_path(flavor).shellescape}"] : []' : ''}
     )
 
     artifact = artifact_path(flavor, type)
@@ -336,7 +360,7 @@ def firebase_app_id(config, options)
 end
 ''';
 
-  String _firebaseLane(FirebaseTarget firebase) {
+  String _firebaseLane(FirebaseTarget firebase, bool uploadSymbols) {
     final groups = firebase.groups;
     // Left out when none are configured. The old default named a `testers`
     // group, which App Distribution rejects in any project that has no group
@@ -367,15 +391,15 @@ end
     UI.message("Shipping #{config[:package_name]} #{name}+#{number} to Firebase App Distribution")
 
     type = options.fetch(:type, "apk")
-    artifact = build(
+${uploadSymbols ? '    upload_symbols = !options[:skip_symbols]\n' : ''}    artifact = build(
       flavor: flavor,
       type: type,
       version_name: name,
-      build_number: number
+      build_number: number${uploadSymbols ? ',\n      split_debug_info: upload_symbols' : ''}
     )
 
     next UI.important("dry_run: would upload #{artifact} to #{app_id}") if options[:dry_run]
-
+${uploadSymbols ? _dartSymbolsUpload : ''}
     firebase_app_distribution(
       # A service-account file, not the deprecated CI token, which App
       # Distribution no longer accepts.
@@ -390,6 +414,19 @@ end
   end
 ''';
   }
+
+  /// Before the App Distribution upload, so a symbols failure stops a build
+  /// no tester has received yet. `skip_symbols:true` ships without them.
+  static const String _dartSymbolsUpload = '''
+
+    if upload_symbols
+      upload_dart_symbols(
+        app_id: app_id,
+        symbols: dart_symbols_path(flavor),
+        credentials: ENV.fetch(credentials)
+      )
+    end
+''';
 
   /// `supply` spells the status in camelCase, unlike every other option.
   static String _statusName(PlayReleaseStatus status) =>

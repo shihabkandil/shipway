@@ -11,6 +11,7 @@ ResolvedApp app({
   AndroidSigningConfig? signing,
   VersioningConfig versioning = const VersioningConfig(),
   bool flavors = true,
+  bool uploadSymbols = false,
 }) => ResolvedApp(
   appId: 'main',
   projectName: 'acme_app',
@@ -21,6 +22,7 @@ ResolvedApp app({
   firebase: firebase,
   androidSigning: signing,
   versioning: versioning,
+  uploadCrashlyticsSymbols: uploadSymbols,
   flavors: !flavors
       ? const <ResolvedFlavor>[]
       : <ResolvedFlavor>[
@@ -438,6 +440,52 @@ void main() {
       );
       expect(fastfile, contains('json_key_data: ENV.fetch("PLAY_JSON")'));
       expect(fastfile, isNot(contains('PLAY_SERVICE_ACCOUNT_JSON_PATH')));
+    });
+  });
+
+  group('Crashlytics Dart symbols', () {
+    const firebase = FirebaseTarget();
+
+    test('are left out unless the config asks for them', () {
+      final fastfile = render(app(firebase: firebase));
+      expect(fastfile, isNot(contains('split-debug-info')));
+      expect(fastfile, isNot(contains('upload_dart_symbols')));
+    });
+
+    test('are left out without a Firebase target to read them', () {
+      final fastfile = render(app(uploadSymbols: true));
+      expect(fastfile, isNot(contains('split-debug-info')));
+      expect(fastfile, isNot(contains('upload_dart_symbols')));
+    });
+
+    test(
+      'split out of the Firebase build and uploaded before distribution',
+      () {
+        final fastfile = render(app(firebase: firebase, uploadSymbols: true));
+        expect(
+          fastfile,
+          contains(
+            '"--split-debug-info #{dart_symbols_path(flavor).shellescape}"',
+          ),
+        );
+        expect(fastfile, contains('split_debug_info: upload_symbols'));
+        expect(fastfile, contains('firebase crashlytics:symbols:upload'));
+        expect(
+          fastfile.indexOf('upload_dart_symbols(\n'),
+          lessThan(fastfile.indexOf('firebase_app_distribution(')),
+        );
+        expect(
+          fastfile.indexOf('if options[:dry_run]'),
+          lessThan(fastfile.indexOf('upload_dart_symbols(\n')),
+        );
+      },
+    );
+
+    test('never obfuscate, which would rename types matched by name', () {
+      expect(
+        render(app(firebase: firebase, uploadSymbols: true)),
+        isNot(contains('--obfuscate')),
+      );
     });
   });
 }
