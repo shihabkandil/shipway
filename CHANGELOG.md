@@ -7,6 +7,8 @@
   `firebase` lane builds with `--split-debug-info` and uploads the Dart
   symbols. The generated workflow installs the Firebase CLI when the Android
   job needs it. Off by default; `skip_symbols:true` skips it for one release.
+- New `crashlytics.obfuscate`, which builds the iOS release and the Android
+  Firebase artifact with `--obfuscate`. It requires `upload_symbols`.
 
 ## 0.1.0-beta.3
 

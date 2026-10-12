@@ -133,6 +133,10 @@ def crashlytics_upload_symbols_binary
   found
 end
 
+def dart_symbols_path(flavor)
+  root_path("build/ios/symbols/#{flavor}")
+end
+
 # targets.testflight.changelog_from: git
 def what_to_test(override = nil)
   return override unless override.to_s.strip.empty?
@@ -217,7 +221,7 @@ platform :ios do
       entrypoint: config[:entrypoint],
       version: options[:version_name],
       build: options[:build_number],
-      extra: ["--no-codesign"]
+      extra: ["--no-codesign", "--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"]
     )
 
     build_app(

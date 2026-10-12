@@ -243,7 +243,7 @@ platform :android do
       entrypoint: config[:entrypoint],
       version: options[:version_name],
       build: options[:build_number],
-      extra: options[:split_debug_info] ? ["--split-debug-info #{dart_symbols_path(flavor).shellescape}"] : []
+      extra: options[:split_debug_info] ? ["--obfuscate", "--split-debug-info #{dart_symbols_path(flavor).shellescape}"] : []
     )
 
     artifact = artifact_path(flavor, type)

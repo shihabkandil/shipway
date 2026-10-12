@@ -88,6 +88,7 @@ apps:                         # keyed by app id; a single-app repo uses `main`
 
     crashlytics:
       upload_symbols: false            # dSYMs and Dart symbols; see below
+      obfuscate: false                 # --obfuscate; needs upload_symbols
 
     versioning:
       strategy: increment              # timestamp | increment | remote
@@ -288,9 +289,16 @@ crashlytics_symbols flavor:<name>` reruns the upload on its own.
 the Dart symbols with `firebase crashlytics:symbols:upload`, authenticated as
 the flavor's App Distribution service account, which then also needs a role
 that can write Crashlytics symbols. The Firebase CLI must be on the machine;
-the generated workflow installs it when the Android job runs that lane. The
-build is not obfuscated: `--obfuscate` renames types, and code that matches on
-`runtimeType.toString()` would silently stop matching.
+the generated workflow installs it when the Android job runs that lane.
+
+**Obfuscation.** `obfuscate: true` adds `--obfuscate` to the iOS release build
+and the Android Firebase build, renaming Dart symbols to make the app harder to
+reverse engineer. It requires `upload_symbols`, because an obfuscated crash
+cannot be read without them. On iOS the obfuscated Dart frames are symbolicated
+from `App.framework.dSYM`, which the dSYM upload already sends; the
+`--split-debug-info` files under `build/ios/symbols` are kept, not uploaded.
+Code that matches on `runtimeType.toString()` stops matching once types are
+renamed, so check for it before turning this on.
 
 Both uploads run after a `dry_run` would stop and before the store upload, so a
 failure stops a build no tester has received. `skip_symbols:true` on a lane

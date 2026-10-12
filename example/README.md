@@ -117,6 +117,7 @@ apps:
     # Store, and the Dart symbols of the Firebase build.
     crashlytics:
       upload_symbols: true
+      obfuscate: true
 
     versioning:
       strategy: remote             # ask each store for its last build number
