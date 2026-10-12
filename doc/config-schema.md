@@ -86,6 +86,9 @@ apps:                         # keyed by app id; a single-app repo uses `main`
         android_app_id_ref: FB_ANDROID_APP_ID  # optional; see below
         ios_app_id_ref: FB_IOS_APP_ID  # accepted, read by nothing yet
 
+    crashlytics:
+      upload_symbols: false            # dSYMs and Dart symbols; see below
+
     versioning:
       strategy: increment              # timestamp | increment | remote
       sync_ios_android: true           # keep CFBundleVersion == versionCode
@@ -267,6 +270,31 @@ from the project's bundle — whether the account can reach the app. A refusal
 stops the release before the build and names the account, the project and the
 role it needs (Firebase App Distribution Admin). `--no-access-check` skips the
 call.
+
+## `crashlytics` — symbols for readable crashes
+
+With `upload_symbols: true`, the release lanes send Crashlytics what it needs
+to turn a crash into file and line numbers. Off by default.
+
+**iOS.** `beta` and `release` upload every dSYM in the archive `flutter build
+ipa` leaves at `build/ios/archive/Runner.xcarchive` — the app, its extensions,
+Flutter's `App.framework` and each embedded framework — using the flavor's
+`GoogleService-Info.plist` (`flavors.<name>.firebase.ios`). The tool is
+Crashlytics' own `upload-symbols`, taken from the Swift Package checkout Flutter
+keeps under `build/ios/SourcePackages`, or from CocoaPods. `fastlane ios
+crashlytics_symbols flavor:<name>` reruns the upload on its own.
+
+**Android.** The `firebase` lane builds with `--split-debug-info` and uploads
+the Dart symbols with `firebase crashlytics:symbols:upload`, authenticated as
+the flavor's App Distribution service account, which then also needs a role
+that can write Crashlytics symbols. The Firebase CLI must be on the machine;
+the generated workflow installs it when the Android job runs that lane. The
+build is not obfuscated: `--obfuscate` renames types, and code that matches on
+`runtimeType.toString()` would silently stop matching.
+
+Both uploads run after a `dry_run` would stop and before the store upload, so a
+failure stops a build no tester has received. `skip_symbols:true` on a lane
+ships without them.
 
 ## `ios.export` — who exports the `.ipa`
 

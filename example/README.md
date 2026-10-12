@@ -113,6 +113,11 @@ apps:
         # No app id variable: each flavor's app id is read from its own
         # google-services.json.
 
+    # Crashlytics symbols: the archive's dSYMs before TestFlight and the App
+    # Store, and the Dart symbols of the Firebase build.
+    crashlytics:
+      upload_symbols: true
+
     versioning:
       strategy: remote             # ask each store for its last build number
       sync_ios_android: true
