@@ -182,6 +182,7 @@ class ResolvedApp {
     this.shipsIos = true,
     this.versioning = const VersioningConfig(),
     this.appstore,
+    this.uploadCrashlyticsSymbols = false,
   });
 
   final String appId;
@@ -234,6 +235,9 @@ class ResolvedApp {
   /// Whether this app ships to Apple. Carried from `AppConfig.shipsIos` so the
   /// generators and the pre-flight cannot answer it differently.
   final bool shipsIos;
+
+  /// `crashlytics.upload_symbols`.
+  final bool uploadCrashlyticsSymbols;
 
   bool get hasFlavors => flavors.isNotEmpty;
 

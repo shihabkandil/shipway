@@ -38,6 +38,7 @@ void main() {
       expect(app.flavors, isEmpty);
       expect(app.versioning.strategy, VersioningStrategy.increment);
       expect(app.versioning.syncIosAndroid, isTrue);
+      expect(app.crashlytics.uploadSymbols, isFalse);
       expect(config.secrets.dotenv, '.env.{flavor}');
       expect(config.secrets.keychain, isTrue);
     });
@@ -204,5 +205,18 @@ apps:
       File('${dir.path}/shipway.yaml').writeAsStringSync('version: 1');
       expect(ConfigLoader.locate(dir.path), isNotNull);
     });
+  });
+
+  test('crashlytics.upload_symbols is read from the app', () {
+    final config = ConfigLoader.parse('''
+version: 1
+project:
+  name: acme_app
+apps:
+  main:
+    crashlytics:
+      upload_symbols: true
+''');
+    expect(config.appOrNull(null)!.crashlytics.uploadSymbols, isTrue);
   });
 }

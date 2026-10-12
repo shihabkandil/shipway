@@ -94,6 +94,7 @@ AppConfig _$AppConfigFromJson(Map json) => $checkedCreate('AppConfig', json, (
       'signing',
       'targets',
       'versioning',
+      'crashlytics',
     ],
   );
   final val = AppConfig(
@@ -128,6 +129,12 @@ AppConfig _$AppConfigFromJson(Map json) => $checkedCreate('AppConfig', json, (
           ? const VersioningConfig()
           : VersioningConfig.fromJson(v as Map),
     ),
+    crashlytics: $checkedConvert(
+      'crashlytics',
+      (v) => v == null
+          ? const CrashlyticsConfig()
+          : CrashlyticsConfig.fromJson(v as Map),
+    ),
   );
   return val;
 });
@@ -140,6 +147,7 @@ Map<String, dynamic> _$AppConfigToJson(AppConfig instance) => <String, dynamic>{
   'signing': instance.signing.toJson(),
   'targets': instance.targets.toJson(),
   'versioning': instance.versioning.toJson(),
+  'crashlytics': instance.crashlytics.toJson(),
 };
 
 AndroidAppConfig _$AndroidAppConfigFromJson(Map json) =>
@@ -714,6 +722,21 @@ const _$VersioningStrategyEnumMap = {
   VersioningStrategy.increment: 'increment',
   VersioningStrategy.remote: 'remote',
 };
+
+CrashlyticsConfig _$CrashlyticsConfigFromJson(Map json) =>
+    $checkedCreate('CrashlyticsConfig', json, ($checkedConvert) {
+      $checkKeys(json, allowedKeys: const ['upload_symbols']);
+      final val = CrashlyticsConfig(
+        uploadSymbols: $checkedConvert(
+          'upload_symbols',
+          (v) => v as bool? ?? false,
+        ),
+      );
+      return val;
+    }, fieldKeyMap: const {'uploadSymbols': 'upload_symbols'});
+
+Map<String, dynamic> _$CrashlyticsConfigToJson(CrashlyticsConfig instance) =>
+    <String, dynamic>{'upload_symbols': instance.uploadSymbols};
 
 SecretsConfig _$SecretsConfigFromJson(Map json) => $checkedCreate(
   'SecretsConfig',
