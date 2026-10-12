@@ -220,7 +220,7 @@ ${_indent(_androidEnv(app), 6)}
 
 ${_installStep()}
 
-${_androidSigningStep(app)}${_playKeyStep(app)}${_firebaseKeyStep(app)}
+${_androidSigningStep(app)}${_playKeyStep(app)}${_firebaseKeyStep(app)}${_firebaseCliStep(app)}
       - name: Check credentials
         run: shipway secrets check --env ci
 
@@ -285,6 +285,23 @@ ${_androidSigningStep(app)}${_playKeyStep(app)}${_firebaseKeyStep(app)}
 
 ''',
     ].join();
+  }
+
+  /// The firebase lane uploads Dart symbols with the Firebase CLI, which a
+  /// hosted runner does not have.
+  String _firebaseCliStep(ResolvedApp app) {
+    if (!app.uploadCrashlyticsSymbols || _androidLane(app) != 'firebase') {
+      return '';
+    }
+    return '''
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install the Firebase CLI
+        run: npm install --global firebase-tools
+
+''';
   }
 
   /// One per distinct variable: flavors in separate Firebase projects name
